@@ -299,27 +299,30 @@ export class RevertConfirmModal extends Modal {
       text: this.getConfirmButtonLabel(),
     });
 
-    this.confirmBtnEl.addEventListener("click", async () => {
-      if (this.isSubmitting || this.selectedIndices.size === 0) return;
-      this.isSubmitting = true;
-      this.confirmBtnEl.setAttr("disabled", "true");
-      cancelBtn.setAttr("disabled", "true");
-      this.confirmTextEl.setText("Reverting...");
+    this.confirmBtnEl.addEventListener("click", () => {
+      void (async () => {
+        if (this.isSubmitting || this.selectedIndices.size === 0) return;
+        this.isSubmitting = true;
+        this.confirmBtnEl.setAttr("disabled", "true");
+        cancelBtn.setAttr("disabled", "true");
+        this.confirmTextEl.setText("Reverting...");
 
-      const selectedChanges = items
-        .filter((_, idx) => this.selectedIndices.has(idx))
-        .map((it) => it.record);
+        const selectedChanges = items
+          .filter((_, idx) => this.selectedIndices.has(idx))
+          .map((it) => it.record);
 
-      try {
-        await this.options.onConfirm(selectedChanges, this.removeMessage);
-        this.close();
-      } catch (err: any) {
-        this.isSubmitting = false;
-        this.confirmBtnEl.removeAttribute("disabled");
-        cancelBtn.removeAttribute("disabled");
-        this.confirmTextEl.setText(this.getConfirmButtonLabel());
-        new Notice(`Failed to revert changes: ${err?.message || String(err)}`);
-      }
+        try {
+          await this.options.onConfirm(selectedChanges, this.removeMessage);
+          this.close();
+        } catch (err: unknown) {
+          this.isSubmitting = false;
+          this.confirmBtnEl.removeAttribute("disabled");
+          cancelBtn.removeAttribute("disabled");
+          this.confirmTextEl.setText(this.getConfirmButtonLabel());
+          const errMsg = err instanceof Error ? err.message : String(err);
+          new Notice(`Failed to revert changes: ${errMsg}`);
+        }
+      })();
     });
   }
 

@@ -16,13 +16,8 @@
   font-family: var(--font-interface);
 }
 
-/* Enforce 280px Minimum Width on Parent Leaf and Split Container */
-.workspace-leaf:has(.ai-sidepanel-root),
+/* Enforce 280px Minimum Width on View Container */
 .workspace-leaf-content[data-type="obsidian-ai-sidepanel-view"] {
-  min-width: 280px !important;
-}
-
-.workspace-split.mod-right-split:has(.ai-sidepanel-root) {
   min-width: 280px;
 }
 
@@ -840,6 +835,10 @@
   overflow: hidden;
 }
 
+.ai-popup-url-box.hidden {
+  display: none;
+}
+
 .ai-popup-url-label {
   color: var(--text-muted);
   flex-shrink: 0;
@@ -1240,15 +1239,18 @@
 /* ==========================================================================
    Available Models Modal Dialog (Wide & Structured Popup)
    ========================================================================== */
-.modal.mod-ai-models-modal {
-  width: 840px !important;
-  max-width: 94vw !important;
-  height: 82vh !important;
-  max-height: 840px !important;
-  padding: 0 !important;
+.modal-container .modal.mod-ai-models-modal {
+  --dialog-width: 840px;
+  --dialog-max-width: 94vw;
+  --dialog-max-height: 840px;
+  width: 840px;
+  max-width: 94vw;
+  height: 82vh;
+  max-height: 840px;
+  padding: 0;
   border-radius: 12px;
   overflow: hidden;
-  display: flex !important;
+  display: flex;
   flex-direction: column;
   box-shadow: 0 20px 45px rgba(0, 0, 0, 0.45);
   border: 1px solid var(--background-modifier-border-focus, var(--interactive-accent));
@@ -1358,10 +1360,10 @@
   transition: all 0.2s ease;
 }
 
-.ai-modal-provider-badge.live {
-  background-color: #059669 !important;
-  color: #ffffff !important;
-  box-shadow: 0 0 10px rgba(5, 150, 105, 0.5) !important;
+.ai-modal-badge-group .ai-modal-provider-badge.live {
+  background-color: #059669;
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(5, 150, 105, 0.5);
 }
 
 .ai-modal-rescan-btn {
@@ -1523,22 +1525,22 @@
   height: 16px;
 }
 
-.ai-modal-search-box {
+.ai-modal-search-wrapper input.ai-modal-search-box {
   width: 100%;
-  padding: 10px 14px 10px 40px !important;
-  font-size: 13.5px !important;
-  border-radius: 8px !important;
-  background-color: var(--background-secondary) !important;
-  border: 1px solid var(--background-modifier-border) !important;
-  color: var(--text-normal) !important;
+  padding: 10px 14px 10px 40px;
+  font-size: 13.5px;
+  border-radius: 8px;
+  background-color: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  color: var(--text-normal);
   box-sizing: border-box;
   transition: all 0.15s ease;
 }
 
-.ai-modal-search-box:focus {
-  border-color: var(--interactive-accent) !important;
-  box-shadow: 0 0 0 2px rgba(var(--interactive-accent-rgb), 0.2) !important;
-  background-color: var(--background-primary) !important;
+.ai-modal-search-wrapper input.ai-modal-search-box:focus {
+  border-color: var(--interactive-accent);
+  box-shadow: 0 0 0 2px rgba(var(--interactive-accent-rgb), 0.2);
+  background-color: var(--background-primary);
 }
 
 /* Modal 2-Column Cards Grid */
@@ -1753,32 +1755,32 @@
   gap: 8px;
 }
 
-.ai-modal-custom-field {
+.ai-modal-footer-input-row input.ai-modal-custom-field {
   flex: 1 1 auto;
   min-width: 0;
-  padding: 8px 12px !important;
-  font-size: 12.5px !important;
+  padding: 8px 12px;
+  font-size: 12.5px;
   font-family: var(--font-monospace);
-  border-radius: 6px !important;
-  background-color: var(--background-secondary) !important;
-  border: 1px solid var(--background-modifier-border) !important;
-  color: var(--text-normal) !important;
+  border-radius: 6px;
+  background-color: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  color: var(--text-normal);
   box-sizing: border-box;
 }
 
-.ai-modal-custom-field:focus {
-  border-color: var(--interactive-accent) !important;
-  background-color: var(--background-primary) !important;
+.ai-modal-footer-input-row input.ai-modal-custom-field:focus {
+  border-color: var(--interactive-accent);
+  background-color: var(--background-primary);
 }
 
-.ai-modal-apply-btn {
-  height: auto !important;
+.ai-modal-footer-input-row button.ai-modal-apply-btn {
+  height: auto;
   min-height: 32px;
   line-height: 1.2;
-  padding: 7px 16px !important;
-  font-size: 12.5px !important;
-  font-weight: 600 !important;
-  border-radius: 6px !important;
+  padding: 7px 16px;
+  font-size: 12.5px;
+  font-weight: 600;
+  border-radius: 6px;
   white-space: nowrap;
   flex-shrink: 0;
   cursor: pointer;
@@ -3345,11 +3347,11 @@
   cursor: pointer;
 }
 
-.ai-connection-del-btn {
+.ai-connection-actions button.ai-connection-del-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 4px 6px !important;
+  padding: 4px 6px;
   color: var(--text-muted);
 }
 

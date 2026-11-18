@@ -49,9 +49,6 @@ export class ModelsPickerModal extends Modal {
 
   async onOpen(): Promise<void> {
     this.modalEl.addClass("mod-ai-models-modal");
-    this.modalEl.style.width = "820px";
-    this.modalEl.style.maxWidth = "94vw";
-    this.modalEl.style.maxHeight = "85vh";
 
     const { contentEl } = this;
     contentEl.empty();
@@ -83,7 +80,7 @@ export class ModelsPickerModal extends Modal {
     setIcon(this.rescanBtnEl, "refresh-cw");
     this.rescanBtnEl.addEventListener("click", () => {
       if (!this.isScanning) {
-        this.scanAndPopulateModels();
+        void this.scanAndPopulateModels();
       }
     });
 
@@ -167,12 +164,14 @@ export class ModelsPickerModal extends Modal {
       }
     };
 
-    customApplyBtn.addEventListener("click", testCustomModel);
+    customApplyBtn.addEventListener("click", () => {
+      void testCustomModel();
+    });
 
-    customInput.addEventListener("keydown", async (e: KeyboardEvent) => {
+    customInput.addEventListener("keydown", (e: KeyboardEvent) => {
       if (e.key === "Enter") {
         e.preventDefault();
-        await testCustomModel();
+        void testCustomModel();
       }
     });
 
@@ -314,9 +313,10 @@ export class ModelsPickerModal extends Modal {
         this.renderModelGrid(this.searchInput.value);
       }
       this.searchInput.focus();
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (!signal.aborted) {
-        this.statusTextEl.setText(`⚠️ Connection error: ${err?.message || "Unable to reach provider API"}`);
+        const errMsg = err instanceof Error ? err.message : "Unable to reach provider API";
+        this.statusTextEl.setText(`⚠️ Connection error: ${errMsg}`);
         this.allModels = [];
         this.plugin.settings.attachedModels = [];
         await this.plugin.saveSettings();
@@ -451,8 +451,8 @@ export class ModelsPickerModal extends Modal {
       });
     }
 
-    card.addEventListener("click", async () => {
-      await this.selectModel(m.id);
+    card.addEventListener("click", () => {
+      void this.selectModel(m.id);
     });
   }
 

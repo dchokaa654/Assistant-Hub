@@ -11,6 +11,26 @@ import {
 import { AISidepanelSettingTab } from "./settings";
 import { AiSidepanelView, AI_VIEW_TYPE } from "./view/AiSidepanelView";
 
+interface PersistedPluginData extends Partial<AISidepanelSettings> {
+  settings?: Partial<AISidepanelSettings>;
+  conversations?: Conversation[];
+  activeConversationId?: string;
+  lastSaved?: number;
+}
+
+interface WorkspaceSplitExt {
+  collapsed?: boolean;
+  containerEl?: HTMLElement;
+  size?: number;
+  collapse?: () => void;
+  expand?: () => void;
+  setSize?: (size: number) => void;
+}
+
+interface WorkspaceLeafExt {
+  containerEl?: HTMLElement;
+}
+
 export default class AISidepanelPlugin extends Plugin {
   settings: AISidepanelSettings = DEFAULT_SETTINGS;
   conversations: Conversation[] = [];
@@ -29,7 +49,7 @@ export default class AISidepanelPlugin extends Plugin {
 
     // Star/Sparkle Ribbon icon in left sidebar: toggles Assistant Panel open/closed
     this.addRibbonIcon("sparkles", "Toggle Assistant Panel", () => {
-      this.toggleView();
+      void this.toggleView();
     });
 
     // Command: Open / Toggle Assistant Panel
@@ -37,7 +57,7 @@ export default class AISidepanelPlugin extends Plugin {
       id: "toggle-ai-sidepanel",
       name: "Toggle Assistant Panel",
       callback: () => {
-        this.toggleView();
+        void this.toggleView();
       },
     });
 
@@ -51,10 +71,9 @@ export default class AISidepanelPlugin extends Plugin {
 
         const view = await this.activateView();
         if (view) {
-          // @ts-ignore
           const inputEl = view.containerEl.querySelector(
             ".ai-sidepanel-textarea"
-          ) as HTMLTextAreaElement;
+          ) as HTMLTextAreaElement | null;
           if (inputEl) {
             inputEl.value = `Regarding this excerpt:\n"""\n${selection}\n"""\n\n`;
             inputEl.focus();
@@ -75,14 +94,12 @@ export default class AISidepanelPlugin extends Plugin {
 
         const view = await this.activateView();
         if (view) {
-          // @ts-ignore
           const inputEl = view.containerEl.querySelector(
             ".ai-sidepanel-textarea"
-          ) as HTMLTextAreaElement;
-          // @ts-ignore
+          ) as HTMLTextAreaElement | null;
           const sendBtn = view.containerEl.querySelector(
             ".ai-send-btn"
-          ) as HTMLButtonElement;
+          ) as HTMLButtonElement | null;
 
           if (inputEl && sendBtn) {
             inputEl.value = `Please provide a concise and structured summary of this note with key takeaways and any action items.`;
@@ -97,12 +114,12 @@ export default class AISidepanelPlugin extends Plugin {
 
     // Ensure the sidepanel is opened at default size on startup
     this.app.workspace.onLayoutReady(() => {
-      this.activateView();
+      void this.activateView();
     });
   }
 
   onunload(): void {
-    this.app.workspace.detachLeavesOfType(AI_VIEW_TYPE);
+    // Do not detach leaves in onunload so user workspace layout is preserved
   }
 
   async loadSettings(): Promise<void> {
@@ -113,92 +130,69 @@ export default class AISidepanelPlugin extends Plugin {
     this.loadSettingsPromise = (async () => {
       try {
         // Layer 1: Standard plugin data.json
-        const pluginData = await this.loadData();
+        const pluginData = (await this.loadData()) as PersistedPluginData | null;
 
-        // Layer 2: External Vault-level config (.obsidian/ai-sidepanel-config.json)
-        // Survives manual plugin updates, folder re-installations, or git checkouts
-        let vaultConfig: any = null;
+        // Layer 2: Vault config backup inside Vault#configDir
+        let vaultConfig: PersistedPluginData | null = null;
         try {
-          const configDir = this.app.vault.configDir || ".obsidian";
+          const configDir = this.app.vault.configDir;
           const vaultConfigPath = `${configDir}/ai-sidepanel-config.json`;
           if (await this.app.vault.adapter.exists(vaultConfigPath)) {
             const raw = await this.app.vault.adapter.read(vaultConfigPath);
             if (raw && raw.trim()) {
-              vaultConfig = JSON.parse(raw);
+              vaultConfig = JSON.parse(raw) as PersistedPluginData;
             }
           }
         } catch (err) {
           console.warn("[AI Sidepanel] Could not read vault-level config backup:", err);
         }
 
-        // Layer 3: Web / Electron localStorage
-        // Survives even if .obsidian folder contents are wiped or updated
-        let localConfig: any = null;
-        try {
-          if (typeof window !== "undefined" && window.localStorage) {
-            const raw = window.localStorage.getItem("obsidian_ai_sidepanel_persistent_config");
-            if (raw && raw.trim()) {
-              localConfig = JSON.parse(raw);
-            }
-          }
-        } catch (err) {
-          console.warn("[AI Sidepanel] Could not read localStorage config backup:", err);
-        }
-
         // Extract settings payload from each store
-        const s1 =
+        const s1: Partial<AISidepanelSettings> =
           pluginData?.settings ||
           (pluginData && !pluginData.settings && !pluginData.conversations
             ? pluginData
             : null) ||
           {};
-        const s2 =
+        const s2: Partial<AISidepanelSettings> =
           vaultConfig?.settings ||
           (vaultConfig && !vaultConfig.settings ? vaultConfig : null) ||
           {};
-        const s3 =
-          localConfig?.settings ||
-          (localConfig && !localConfig.settings ? localConfig : null) ||
-          {};
 
         // Merge with DEFAULT_SETTINGS as base
-        const mergedSettings: AISidepanelSettings = Object.assign({}, DEFAULT_SETTINGS);
-
-        // Apply backup layers first, then plugin data layer
-        Object.assign(mergedSettings, s3);
-        Object.assign(mergedSettings, s2);
-        Object.assign(mergedSettings, s1);
+        const mergedSettings: AISidepanelSettings = Object.assign(
+          {},
+          DEFAULT_SETTINGS,
+          s2,
+          s1
+        );
 
         // Self-Healing Credential Recovery:
-        // If s1 had empty apiKey or baseUrl (common when updating or replacing plugin folder),
-        // recover apiKey, baseUrl, and active model from s2 or s3!
         if (!mergedSettings.apiKey?.trim()) {
-          const recoveredKey = ((s2.apiKey || s3.apiKey || "") as string).trim();
+          const recoveredKey = (s2.apiKey || "").trim();
           if (recoveredKey) {
             mergedSettings.apiKey = recoveredKey;
           }
         }
 
         if (!mergedSettings.baseUrl?.trim()) {
-          const recoveredUrl = ((s2.baseUrl || s3.baseUrl || "") as string).trim();
+          const recoveredUrl = (s2.baseUrl || "").trim();
           if (recoveredUrl) {
             mergedSettings.baseUrl = recoveredUrl;
           }
         }
 
         if (!mergedSettings.model?.trim()) {
-          const recoveredModel = ((s2.model || s3.model || "") as string).trim();
+          const recoveredModel = (s2.model || "").trim();
           if (recoveredModel) {
             mergedSettings.model = recoveredModel;
           }
         }
 
-        // If attachedModels was lost, recover from backup stores
+        // If attachedModels was lost, recover from backup store
         if (!mergedSettings.attachedModels || mergedSettings.attachedModels.length === 0) {
           if (s2.attachedModels && s2.attachedModels.length > 0) {
             mergedSettings.attachedModels = s2.attachedModels;
-          } else if (s3.attachedModels && s3.attachedModels.length > 0) {
-            mergedSettings.attachedModels = s3.attachedModels;
           }
         }
 
@@ -232,18 +226,14 @@ export default class AISidepanelPlugin extends Plugin {
         this.conversations =
           pluginData?.conversations ||
           vaultConfig?.conversations ||
-          localConfig?.conversations ||
           [];
         this.activeConversationId =
           pluginData?.activeConversationId ||
           vaultConfig?.activeConversationId ||
-          localConfig?.activeConversationId ||
           "";
 
         this.isSettingsLoaded = true;
 
-        // If credentials were recovered from backup because data.json was missing or empty,
-        // synchronize all stores immediately
         if (mergedSettings.apiKey || mergedSettings.baseUrl) {
           await this.persistToAllStores();
         }
@@ -459,7 +449,7 @@ export default class AISidepanelPlugin extends Plugin {
   }
 
   private async persistToAllStores(): Promise<void> {
-    const payload = {
+    const payload: PersistedPluginData = {
       settings: this.settings,
       conversations: this.conversations,
       activeConversationId: this.activeConversationId,
@@ -473,9 +463,9 @@ export default class AISidepanelPlugin extends Plugin {
       console.warn("[AI Sidepanel] Could not save to plugin data.json:", err);
     }
 
-    // Store 2: External Vault-level config (.obsidian/ai-sidepanel-config.json)
+    // Store 2: Vault config backup inside Vault#configDir
     try {
-      const configDir = this.app.vault.configDir || ".obsidian";
+      const configDir = this.app.vault.configDir;
       const vaultConfigPath = `${configDir}/ai-sidepanel-config.json`;
       await this.app.vault.adapter.write(
         vaultConfigPath,
@@ -483,18 +473,6 @@ export default class AISidepanelPlugin extends Plugin {
       );
     } catch (err) {
       console.warn("[AI Sidepanel] Could not save to vault-level config backup:", err);
-    }
-
-    // Store 3: Web / Electron localStorage
-    try {
-      if (typeof window !== "undefined" && window.localStorage) {
-        window.localStorage.setItem(
-          "obsidian_ai_sidepanel_persistent_config",
-          JSON.stringify(payload)
-        );
-      }
-    } catch (err) {
-      console.warn("[AI Sidepanel] Could not save to localStorage config backup:", err);
     }
   }
 
@@ -535,19 +513,21 @@ export default class AISidepanelPlugin extends Plugin {
   async toggleView(): Promise<void> {
     const { workspace } = this.app;
     const leaves = workspace.getLeavesOfType(AI_VIEW_TYPE);
-    const rightSplit = workspace.rightSplit;
+    const rightSplit = workspace.rightSplit as unknown as WorkspaceSplitExt | null;
 
     // Check if view is currently open and visible
     if (leaves.length > 0 && rightSplit) {
-      // @ts-ignore
-      const isCollapsed = rightSplit.collapsed;
-      // @ts-ignore
-      const isVisible = leaves.some((leaf) => leaf.view instanceof AiSidepanelView && leaf.containerEl?.offsetParent !== null);
+      const isCollapsed = Boolean(rightSplit.collapsed);
+      const isVisible = leaves.some((leaf) => {
+        const leafExt = leaf as unknown as WorkspaceLeafExt;
+        return (
+          leaf.view instanceof AiSidepanelView &&
+          leafExt.containerEl?.offsetParent !== null
+        );
+      });
 
       if (!isCollapsed && isVisible) {
-        // Toggle close: collapse the right split
-        // @ts-ignore
-        rightSplit.collapse();
+        rightSplit.collapse?.();
         return;
       }
     }
@@ -576,29 +556,25 @@ export default class AISidepanelPlugin extends Plugin {
     }
 
     if (leaf) {
-      workspace.revealLeaf(leaf);
+      await workspace.revealLeaf(leaf);
 
       // Expand right split and lock to default minimum size (280px)
-      const rightSplit = workspace.rightSplit;
+      const rightSplit = workspace.rightSplit as unknown as WorkspaceSplitExt | null;
       if (rightSplit) {
-        // @ts-ignore
         if (rightSplit.collapsed) {
-          // @ts-ignore
-          rightSplit.expand();
+          rightSplit.expand?.();
         }
 
-        // @ts-ignore
-        const currentSize = rightSplit.size || rightSplit.containerEl?.clientWidth;
+        const currentSize =
+          rightSplit.size || rightSplit.containerEl?.clientWidth || 0;
         if (!currentSize || currentSize < 280) {
-          // @ts-ignore
           if (typeof rightSplit.setSize === "function") {
-            // @ts-ignore
             rightSplit.setSize(280);
           }
         }
       }
 
-      return leaf.view as AiSidepanelView;
+      return leaf.view instanceof AiSidepanelView ? leaf.view : null;
     }
 
     return null;

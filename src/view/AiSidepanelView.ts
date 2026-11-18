@@ -12,7 +12,6 @@ import type AISidepanelPlugin from "../main";
 import {
   categorizeModel,
   ChatMessage,
-  Conversation,
   detectReasoningCapability,
   getActiveModelReasoningCapability,
   getProviderLabelFromBaseUrl,
@@ -48,6 +47,13 @@ interface AttachedMentionItem {
   kind: "note" | "folder";
   path: string;
   label: string;
+}
+
+interface AppWithSettings {
+  setting?: {
+    open?: () => void;
+    openTabById?: (id: string) => void;
+  };
 }
 
 export class AiSidepanelView extends ItemView {
@@ -286,7 +292,7 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
       const iconSpan = itemEl.createSpan({ cls: "ai-drawer-item-icon" });
       setIcon(iconSpan, "message-square");
 
-      const titleSpan = itemEl.createSpan({
+      itemEl.createSpan({
         cls: "ai-drawer-item-title",
         text: conv.title || "Untitled Chat",
       });
@@ -302,11 +308,11 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
       setIcon(deleteBtn, "trash-2");
       deleteBtn.addEventListener("click", (e: MouseEvent) => {
         e.stopPropagation();
-        this.handleDeleteConversation(conv.id);
+        void this.handleDeleteConversation(conv.id);
       });
 
       itemEl.addEventListener("click", () => {
-        this.switchConversation(conv.id);
+        void this.switchConversation(conv.id);
         if (this.rootEl.clientWidth < 400) {
           this.toggleDrawer(false);
         }
@@ -475,7 +481,9 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
       attr: { title: "New Conversation" },
     });
     setIcon(newChatBtn, "plus");
-    newChatBtn.addEventListener("click", () => this.handleNewChat());
+    newChatBtn.addEventListener("click", () => {
+      void this.handleNewChat();
+    });
 
     // Delete current conversation button
     const deleteConvBtn = actionsBox.createEl("button", {
@@ -484,7 +492,7 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
     });
     setIcon(deleteConvBtn, "trash-2");
     deleteConvBtn.addEventListener("click", () => {
-      this.handleDeleteConversation(this.currentConversationId);
+      void this.handleDeleteConversation(this.currentConversationId);
     });
 
     // Settings shortcut button
@@ -494,10 +502,9 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
     });
     setIcon(settingsBtn, "settings");
     settingsBtn.addEventListener("click", () => {
-      // @ts-ignore
-      this.app.setting.open();
-      // @ts-ignore
-      this.app.setting.openTabById(this.plugin.manifest.id);
+      const settingApi = (this.app as unknown as AppWithSettings).setting;
+      settingApi?.open?.();
+      settingApi?.openTabById?.(this.plugin.manifest.id);
     });
   }
 
@@ -636,8 +643,10 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
     });
 
     this.inputEl.addEventListener("input", () => {
-      this.inputEl.style.height = "auto";
-      this.inputEl.style.height = Math.min(this.inputEl.scrollHeight, 180) + "px";
+      this.inputEl.setCssStyles({ height: "auto" });
+      this.inputEl.setCssStyles({
+        height: `${Math.min(this.inputEl.scrollHeight, 180)}px`,
+      });
       this.syncInlineMentionPopup();
     });
 
@@ -685,7 +694,7 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
 
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        this.handleSend();
+        void this.handleSend();
       }
     });
 
@@ -759,7 +768,7 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
       if (this.isGenerating) {
         this.handleStop();
       } else {
-        this.handleSend();
+        void this.handleSend();
       }
     });
   }
@@ -900,7 +909,7 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
     }
 
     // 2. Check @query (only at start of line or right after whitespace so emails don't trigger)
-    const atMatch = lineSegment.match(/(?:^|\s)@([^\n\[\]]*)$/);
+    const atMatch = lineSegment.match(/(?:^|\s)@([^\n[\]]*)$/);
     if (atMatch) {
       const query = atMatch[1];
       if (query.length <= 45) {
@@ -1146,8 +1155,10 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
     const updated = val.slice(0, start) + linkText + val.slice(end);
     this.inputEl.value = updated;
     const newCursor = start + linkText.length;
-    this.inputEl.style.height = "auto";
-    this.inputEl.style.height = Math.min(this.inputEl.scrollHeight, 180) + "px";
+    this.inputEl.setCssStyles({ height: "auto" });
+    this.inputEl.setCssStyles({
+      height: `${Math.min(this.inputEl.scrollHeight, 180)}px`,
+    });
 
     // Add to attached mentions list (deduplicated) for automatic context injection on Send
     const alreadyAttached = this.attachedMentions.some(
@@ -1272,13 +1283,15 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
         setIcon(check, "check");
       }
 
-      item.addEventListener("click", async (e: MouseEvent) => {
+      item.addEventListener("click", (e: MouseEvent) => {
         e.stopPropagation();
-        this.plugin.settings.reasoningEffort = opt.value;
-        await this.plugin.saveSettings();
-        this.closeReasoningPopup();
-        this.updateReasoningPill();
-        new Notice(`Reasoning effort set to: ${opt.label}`);
+        void (async () => {
+          this.plugin.settings.reasoningEffort = opt.value;
+          await this.plugin.saveSettings();
+          this.closeReasoningPopup();
+          this.updateReasoningPill();
+          new Notice(`Reasoning effort set to: ${opt.label}`);
+        })();
       });
     }
   }
@@ -1427,9 +1440,9 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
       statusTextEl.setText(statusMessage);
 
       if (showAllProfiles) {
-        urlInfoBox.style.display = "none";
+        urlInfoBox.addClass("hidden");
       } else {
-        urlInfoBox.style.display = "flex";
+        urlInfoBox.removeClass("hidden");
         const urlStr = this.plugin.settings.baseUrl || "Not set";
         urlValueEl.setText(urlStr);
         urlValueEl.setAttr("title", urlStr);
@@ -1465,19 +1478,21 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
         });
         profBtns.push({ id: prof.id, el: pBtn });
 
-        pBtn.addEventListener("click", async (e: MouseEvent) => {
+        pBtn.addEventListener("click", (e: MouseEvent) => {
           e.stopPropagation();
-          showAllProfiles = false;
-          if (prof.id !== this.plugin.settings.activeProfileId) {
-            await this.plugin.activateProfile(prof.id);
-            this.closeModelPopup();
-            this.openModelPopup();
-          } else {
-            allBtn.removeClass("active");
-            pBtn.addClass("active");
-            activeCategory = "all";
-            refreshPopupCatalog();
-          }
+          void (async () => {
+            showAllProfiles = false;
+            if (prof.id !== this.plugin.settings.activeProfileId) {
+              await this.plugin.activateProfile(prof.id);
+              this.closeModelPopup();
+              this.openModelPopup();
+            } else {
+              allBtn.removeClass("active");
+              pBtn.addClass("active");
+              activeCategory = "all";
+              refreshPopupCatalog();
+            }
+          })();
         });
       }
 
@@ -1657,21 +1672,23 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
         });
         tagsGroup.createSpan({ cls: "ai-model-live-tag", text: "LIVE" });
 
-        modelCard.addEventListener("click", async () => {
-          if (
-            entry.profileId &&
-            entry.profileId !== this.plugin.settings.activeProfileId
-          ) {
-            await this.plugin.activateProfile(entry.profileId, m.id);
-            new Notice(
-              `Switched to ${entry.profileName} • ${m.name || m.id}`
-            );
-          } else {
-            this.plugin.settings.model = m.id;
-            await this.plugin.saveSettings();
-            new Notice(`Active Model set to: ${m.name || m.id}`);
-          }
-          this.closeModelPopup();
+        modelCard.addEventListener("click", () => {
+          void (async () => {
+            if (
+              entry.profileId &&
+              entry.profileId !== this.plugin.settings.activeProfileId
+            ) {
+              await this.plugin.activateProfile(entry.profileId, m.id);
+              new Notice(
+                `Switched to ${entry.profileName} • ${m.name || m.id}`
+              );
+            } else {
+              this.plugin.settings.model = m.id;
+              await this.plugin.saveSettings();
+              new Notice(`Active Model set to: ${m.name || m.id}`);
+            }
+            this.closeModelPopup();
+          })();
         });
       }
     };
@@ -1751,11 +1768,13 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
       }
     };
 
-    setBtn.addEventListener("click", handlePopupCustomTest);
-    customInput.addEventListener("keydown", async (e: KeyboardEvent) => {
+    setBtn.addEventListener("click", () => {
+      void handlePopupCustomTest();
+    });
+    customInput.addEventListener("keydown", (e: KeyboardEvent) => {
       if (e.key === "Enter") {
         e.preventDefault();
-        await handlePopupCustomTest();
+        void handlePopupCustomTest();
       }
     });
 
@@ -1830,7 +1849,7 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
 
     this.closeMentionPopup();
     this.inputEl.value = "";
-    this.inputEl.style.height = "auto";
+    this.inputEl.setCssStyles({ height: "auto" });
 
     const pendingMentions = [...this.attachedMentions];
     this.attachedMentions = [];
@@ -1898,7 +1917,7 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
         while (renderRequested && !streamDone) {
           renderRequested = false;
           const snapshot = assistantMsg.content;
-          const tempDiv = document.createElement("div");
+          const tempDiv = createDiv();
           await MarkdownRenderer.render(
             this.app,
             snapshot || "*(Thinking...)*",
@@ -1983,18 +2002,18 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
       await this.renderMessages();
       this.scrollToBottom();
       await this.saveActiveConversation();
-    } catch (err: any) {
+    } catch (err: unknown) {
       streamDone = true;
       this.liveAssistantMsg = null;
+      const errMsg = err instanceof Error ? err.message : String(err);
       if (assistantMsg.toolActivities) {
         for (const step of assistantMsg.toolActivities) {
           if (step.status === "running") {
             step.status = "error";
             step.durationMs = Date.now() - step.startedAt;
-            step.resultPreview =
-              err?.message && String(err.message).includes("cancelled")
-                ? "Cancelled by user."
-                : err?.message || "Interrupted";
+            step.resultPreview = errMsg.includes("cancelled")
+              ? "Cancelled by user."
+              : errMsg || "Interrupted";
           }
         }
       }
@@ -2007,7 +2026,7 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
       if (hadActivity) {
         assistantMsg.canResumeTask = true;
       }
-      if (err.message && err.message.includes("cancelled")) {
+      if (errMsg.includes("cancelled")) {
         if (!assistantMsg.content.trim() && hadActivity) {
           assistantMsg.content = "*Generation paused by user.*";
         }
@@ -2015,10 +2034,10 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
         await this.saveActiveConversation();
         new Notice("AI response cancelled.");
       } else {
-        assistantMsg.content += `\n\n❌ **Error:** ${err?.message || String(err)}`;
+        assistantMsg.content += `\n\n❌ **Error:** ${errMsg}`;
         await this.renderMessages();
         await this.saveActiveConversation();
-        new Notice(`AI Error: ${err?.message || String(err)}`);
+        new Notice(`AI Error: ${errMsg}`);
       }
     } finally {
       streamDone = true;
@@ -2053,7 +2072,9 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
           contextBlocks.push(
             `### Active Note: [[${activeFile.path}]] (Target path for tools: path="${activeFile.path}")\n${appendTruncated(content, 24000)}`
           );
-        } catch {}
+        } catch {
+          // Ignore unreadable active note
+        }
       }
     }
 
@@ -2086,7 +2107,9 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
           contextBlocks.push(
             `### Referenced Note: [[${abstract.path}]]\n${appendTruncated(content, 12000)}`
           );
-        } catch {}
+        } catch {
+          // Ignore unreadable mentioned note
+        }
       }
     }
 
@@ -2110,7 +2133,9 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
             `### Referenced Note: [[${resolved.path}]]\n${appendTruncated(content, 12000)}`
           );
           extraCount++;
-        } catch {}
+        } catch {
+          // Ignore unreadable linked note
+        }
       }
     }
 
@@ -2343,7 +2368,9 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
           },
         });
         setIcon(revertBtn, "undo");
-        revertBtn.addEventListener("click", () => this.handleRevertMessage(i, false));
+        revertBtn.addEventListener("click", () => {
+          void this.handleRevertMessage(i, false);
+        });
       }
 
       if (msg.role === "assistant") {
@@ -2395,26 +2422,28 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
           text: "Continue Task",
           attr: { title: "Resume remaining steps from where the assistant stopped" },
         });
-        continueBtn.addEventListener("click", async () => {
-          if (this.isGenerating) return;
-          const wasInterrupted = Boolean(msg.canResumeTask && !msg.hitToolLimit);
-          msg.hitToolLimit = false;
-          msg.canResumeTask = false;
-          if (wasInterrupted && msg.toolActivities && msg.toolActivities.length > 0) {
-            const doneSteps = msg.toolActivities
-              .filter((s) => s.status === "completed")
-              .slice(-12)
-              .map((s) => `- ${s.label}`);
-            this.inputEl.value =
-              doneSteps.length > 0
-                ? `The previous run was interrupted. Completed tool steps so far:\n${doneSteps.join(
-                    "\n"
-                  )}\n\nPlease resume from here and complete the remaining steps.`
-                : "The previous run was interrupted. Please continue and complete the remaining steps.";
-          } else {
-            this.inputEl.value = "Please continue and complete the remaining steps.";
-          }
-          await this.handleSend();
+        continueBtn.addEventListener("click", () => {
+          void (async () => {
+            if (this.isGenerating) return;
+            const wasInterrupted = Boolean(msg.canResumeTask && !msg.hitToolLimit);
+            msg.hitToolLimit = false;
+            msg.canResumeTask = false;
+            if (wasInterrupted && msg.toolActivities && msg.toolActivities.length > 0) {
+              const doneSteps = msg.toolActivities
+                .filter((s) => s.status === "completed")
+                .slice(-12)
+                .map((s) => `- ${s.label}`);
+              this.inputEl.value =
+                doneSteps.length > 0
+                  ? `The previous run was interrupted. Completed tool steps so far:\n${doneSteps.join(
+                      "\n"
+                    )}\n\nPlease resume from here and complete the remaining steps.`
+                  : "The previous run was interrupted. Please continue and complete the remaining steps.";
+            } else {
+              this.inputEl.value = "Please continue and complete the remaining steps.";
+            }
+            await this.handleSend();
+          })();
         });
       }
     }
@@ -2424,8 +2453,7 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
     const tables = containerEl.querySelectorAll("table");
     tables.forEach((table) => {
       if (table.parentElement?.classList.contains("ai-table-wrap")) return;
-      const wrap = document.createElement("div");
-      wrap.className = "ai-table-wrap";
+      const wrap = createDiv({ cls: "ai-table-wrap" });
       table.parentNode?.insertBefore(wrap, table);
       wrap.appendChild(table);
     });
@@ -2476,13 +2504,13 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
     msgIndex: number
   ): Promise<void> {
     if (record.itemKind === "folder" || record.type === "deleted") {
-      this.handleRevertMessage(msgIndex, true);
+      void this.handleRevertMessage(msgIndex, true);
       return;
     }
 
     const abstract = this.app.vault.getAbstractFileByPath(record.path);
     if (!(abstract instanceof TFile)) {
-      this.handleRevertMessage(msgIndex, true);
+      void this.handleRevertMessage(msgIndex, true);
       return;
     }
 
@@ -2668,7 +2696,7 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
       });
       reapplyBtn.addEventListener("click", (e: MouseEvent) => {
         e.stopPropagation();
-        this.handleReapplyMessage(msgIndex);
+        void this.handleReapplyMessage(msgIndex);
       });
     }
   }
@@ -2878,9 +2906,11 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
       attr: { title: "Copy to Clipboard" },
     });
     setIcon(copyBtn, "copy");
-    copyBtn.addEventListener("click", async () => {
-      await navigator.clipboard.writeText(content);
-      new Notice("Copied to clipboard!");
+    copyBtn.addEventListener("click", () => {
+      void (async () => {
+        await navigator.clipboard.writeText(content);
+        new Notice("Copied to clipboard!");
+      })();
     });
 
     // Insert at cursor
@@ -2890,7 +2920,6 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
     });
     setIcon(insertBtn, "file-plus-2");
     insertBtn.addEventListener("click", () => {
-      // @ts-ignore
       const editor = this.app.workspace.activeEditor?.editor;
       if (editor) {
         editor.replaceSelection(content);
@@ -2906,12 +2935,16 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
       attr: { title: "Create New Note from Response" },
     });
     setIcon(createNoteBtn, "file-plus");
-    createNoteBtn.addEventListener("click", async () => {
-      const title = `AI Note - ${new Date().toISOString().slice(0, 10)} - ${Date.now().toString().slice(-4)}`;
-      const filename = `${title}.md`;
-      const file = await this.app.vault.create(filename, content);
-      await this.app.workspace.getLeaf(false).openFile(file as TFile);
-      new Notice(`Created note [[${filename}]]`);
+    createNoteBtn.addEventListener("click", () => {
+      void (async () => {
+        const title = `AI Note - ${new Date().toISOString().slice(0, 10)} - ${Date.now().toString().slice(-4)}`;
+        const filename = `${title}.md`;
+        const file = await this.app.vault.create(filename, content);
+        if (file instanceof TFile) {
+          await this.app.workspace.getLeaf(false).openFile(file);
+        }
+        new Notice(`Created note [[${filename}]]`);
+      })();
     });
   }
 

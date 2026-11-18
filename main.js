@@ -412,11 +412,21 @@ function prioritizeMultiModelCandidates(rawCandidates, preferredModelId, maxCoun
   }
   return selected;
 }
+function safeJson(res) {
+  try {
+    if (res.json !== void 0 && res.json !== null) {
+      return res.json;
+    }
+  } catch {
+  }
+  return null;
+}
 function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 function extractApiErrorReason(status, json, text) {
-  const msg = json?.error?.message || json?.message || json?.error?.code || (typeof text === "string" ? text.slice(0, 140) : "");
+  const errCode = json?.error?.code !== void 0 ? String(json.error.code) : "";
+  const msg = json?.error?.message || json?.message || errCode || (typeof text === "string" ? text.slice(0, 140) : "");
   return `${status}${msg ? `: ${msg}` : ""}`;
 }
 function isAuthenticationErrorText(text) {
@@ -460,19 +470,15 @@ async function verifyOpenAICompatibleModel(baseUrl, key, modelId, attempt = 0) {
       body: buildBody(false, 1),
       throw: false
     });
+    const json = safeJson(res);
     if (res.status === 200) {
-      let json = null;
-      try {
-        json = res.json;
-      } catch {
-      }
       if (json?.error) {
         return {
           ok: false,
           reason: extractApiErrorReason(200, json, res.text)
         };
       }
-      if (json && (Array.isArray(json.choices) || json.id)) {
+      if (json && (Array.isArray(json.choices) || Boolean(json.id))) {
         return { ok: true };
       }
       return { ok: false, reason: "Unexpected non-chat response format" };
@@ -481,7 +487,7 @@ async function verifyOpenAICompatibleModel(baseUrl, key, modelId, attempt = 0) {
       return {
         ok: false,
         fatalAuth: true,
-        reason: extractApiErrorReason(401, res.json, res.text)
+        reason: extractApiErrorReason(401, json, res.text)
       };
     }
     if (res.status === 400 && attempt === 0) {
@@ -494,12 +500,13 @@ async function verifyOpenAICompatibleModel(baseUrl, key, modelId, attempt = 0) {
           body: buildBody(true, 16),
           throw: false
         });
-        if (retryRes.status === 200 && !retryRes.json?.error) {
+        const retryJson = safeJson(retryRes);
+        if (retryRes.status === 200 && !retryJson?.error) {
           return { ok: true };
         }
         return {
           ok: false,
-          reason: extractApiErrorReason(retryRes.status, retryRes.json, retryRes.text)
+          reason: extractApiErrorReason(retryRes.status, retryJson, retryRes.text)
         };
       }
       if (lowerText.includes("max_tokens") || lowerText.includes("at least") || lowerText.includes("enable_thinking")) {
@@ -510,12 +517,13 @@ async function verifyOpenAICompatibleModel(baseUrl, key, modelId, attempt = 0) {
           body: buildBody(false, 16),
           throw: false
         });
-        if (retryRes.status === 200 && !retryRes.json?.error) {
+        const retryJson = safeJson(retryRes);
+        if (retryRes.status === 200 && !retryJson?.error) {
           return { ok: true };
         }
         return {
           ok: false,
-          reason: extractApiErrorReason(retryRes.status, retryRes.json, retryRes.text)
+          reason: extractApiErrorReason(retryRes.status, retryJson, retryRes.text)
         };
       }
     }
@@ -528,16 +536,19 @@ async function verifyOpenAICompatibleModel(baseUrl, key, modelId, attempt = 0) {
       }
       return {
         ok: false,
-        reason: extractApiErrorReason(429, res.json, res.text)
+        reason: extractApiErrorReason(429, json, res.text)
       };
     }
     return {
       ok: false,
       fatalAuth: isAuthenticationErrorText(res.text),
-      reason: extractApiErrorReason(res.status, res.json, res.text)
+      reason: extractApiErrorReason(res.status, json, res.text)
     };
   } catch (err) {
-    return { ok: false, reason: err?.message || "Network error" };
+    return {
+      ok: false,
+      reason: err instanceof Error ? err.message : "Network error"
+    };
   }
 }
 function normalizeGeminiRoot(baseUrl) {
@@ -562,14 +573,15 @@ async function verifyGeminiModel(baseUrl, key, modelId, attempt = 0) {
       }),
       throw: false
     });
-    if (res.status === 200 && (res.json?.candidates || res.json?.usageMetadata)) {
+    const json = safeJson(res);
+    if (res.status === 200 && (Boolean(json?.candidates) || Boolean(json?.usageMetadata))) {
       return { ok: true };
     }
     if (res.status === 401 || res.status === 400 && (res.text || "").includes("API_KEY_INVALID")) {
       return {
         ok: false,
         fatalAuth: true,
-        reason: extractApiErrorReason(res.status, res.json, res.text)
+        reason: extractApiErrorReason(res.status, json, res.text)
       };
     }
     if (res.status === 429) {
@@ -581,16 +593,19 @@ async function verifyGeminiModel(baseUrl, key, modelId, attempt = 0) {
       }
       return {
         ok: false,
-        reason: extractApiErrorReason(429, res.json, res.text)
+        reason: extractApiErrorReason(429, json, res.text)
       };
     }
     return {
       ok: false,
       fatalAuth: isAuthenticationErrorText(res.text),
-      reason: extractApiErrorReason(res.status, res.json, res.text)
+      reason: extractApiErrorReason(res.status, json, res.text)
     };
   } catch (err) {
-    return { ok: false, reason: err?.message || "Network error" };
+    return {
+      ok: false,
+      reason: err instanceof Error ? err.message : "Network error"
+    };
   }
 }
 async function verifyAnthropicModel(baseUrl, key, modelId, attempt = 0) {
@@ -611,14 +626,15 @@ async function verifyAnthropicModel(baseUrl, key, modelId, attempt = 0) {
       }),
       throw: false
     });
-    if (res.status === 200 && (res.json?.content || res.json?.id)) {
+    const json = safeJson(res);
+    if (res.status === 200 && (Boolean(json?.content) || Boolean(json?.id))) {
       return { ok: true };
     }
     if (res.status === 401) {
       return {
         ok: false,
         fatalAuth: true,
-        reason: extractApiErrorReason(401, res.json, res.text)
+        reason: extractApiErrorReason(401, json, res.text)
       };
     }
     if (res.status === 429 && attempt === 0) {
@@ -628,10 +644,13 @@ async function verifyAnthropicModel(baseUrl, key, modelId, attempt = 0) {
     return {
       ok: false,
       fatalAuth: isAuthenticationErrorText(res.text),
-      reason: extractApiErrorReason(res.status, res.json, res.text)
+      reason: extractApiErrorReason(res.status, json, res.text)
     };
   } catch (err) {
-    return { ok: false, reason: err?.message || "Network error" };
+    return {
+      ok: false,
+      reason: err instanceof Error ? err.message : "Network error"
+    };
   }
 }
 async function verifyCandidatesInPool(candidates, verifyFn, onProgress, signal, concurrency = 4) {
@@ -682,11 +701,12 @@ async function scanGemini(baseUrl, key, preferredModel, onProgress, signal) {
   const url = `${root}/v1beta/models?key=${encodeURIComponent(key)}`;
   try {
     const res = await (0, import_obsidian.requestUrl)({ url, method: "GET", throw: false });
-    if (res.status !== 200 || !Array.isArray(res.json?.models)) {
+    const payload = safeJson(res);
+    if (res.status !== 200 || !Array.isArray(payload?.models)) {
       return null;
     }
     const candidates = [];
-    for (const m of res.json.models) {
+    for (const m of payload.models) {
       const methods = m.supportedGenerationMethods || [];
       if (!methods.includes("generateContent"))
         continue;
@@ -772,23 +792,26 @@ async function scanAnthropic(baseUrl, key, preferredModel, onProgress, signal) {
       },
       throw: false
     });
-    if (res.status !== 200 || !Array.isArray(res.json?.data)) {
+    const payload = safeJson(res);
+    if (res.status !== 200 || !Array.isArray(payload?.data)) {
       return null;
     }
-    const rawCandidates = res.json.data.map((m) => {
-      const name = m.display_name || m.id;
-      const desc = `Anthropic Claude (${m.created_at ? new Date(m.created_at).toLocaleDateString() : "Active"})`;
-      const reasoningCap = detectReasoningCapability(m.id, { name }, root);
-      return {
-        id: m.id,
-        name,
-        description: desc,
-        category: categorizeModel(m.id, name, desc),
-        supportsReasoning: reasoningCap.supported,
-        supportedReasoningEfforts: reasoningCap.efforts,
-        isLive: false
-      };
-    });
+    const rawCandidates = payload.data.map(
+      (m) => {
+        const name = m.display_name || m.id;
+        const desc = `Anthropic Claude (${m.created_at ? new Date(m.created_at).toLocaleDateString() : "Active"})`;
+        const reasoningCap = detectReasoningCapability(m.id, { name }, root);
+        return {
+          id: m.id,
+          name,
+          description: desc,
+          category: categorizeModel(m.id, name, desc),
+          supportsReasoning: reasoningCap.supported,
+          supportedReasoningEfforts: reasoningCap.efforts,
+          isLive: false
+        };
+      }
+    );
     const candidates = prioritizeMultiModelCandidates(rawCandidates, preferredModel, 32);
     onProgress?.({
       phase: "verifying",
@@ -841,10 +864,11 @@ async function scanOpenRouter(baseUrl, key, preferredModel, onProgress, signal) 
       headers: { Authorization: `Bearer ${key}` },
       throw: false
     });
-    if (authRes.status !== 200 || !authRes.json?.data) {
+    const authPayload = safeJson(authRes);
+    if (authRes.status !== 200 || !authPayload?.data) {
       return null;
     }
-    const keyData = authRes.json.data;
+    const keyData = authPayload.data;
     let hasCredits = !keyData.is_free_tier;
     const creditsRes = await (0, import_obsidian.requestUrl)({
       url: `${cleanBase}/credits`,
@@ -852,9 +876,10 @@ async function scanOpenRouter(baseUrl, key, preferredModel, onProgress, signal) 
       headers: { Authorization: `Bearer ${key}` },
       throw: false
     });
-    if (creditsRes.status === 200 && creditsRes.json?.data) {
-      const total = Number(creditsRes.json.data.total_credits || 0);
-      const used = Number(creditsRes.json.data.total_usage || 0);
+    const creditsPayload = safeJson(creditsRes);
+    if (creditsRes.status === 200 && creditsPayload?.data) {
+      const total = Number(creditsPayload.data.total_credits || 0);
+      const used = Number(creditsPayload.data.total_usage || 0);
       if (total - used > 1e-3) {
         hasCredits = true;
       } else if (total === 0) {
@@ -869,20 +894,23 @@ async function scanOpenRouter(baseUrl, key, preferredModel, onProgress, signal) 
       method: "GET",
       throw: false
     });
-    if (modelsRes.status !== 200 || !Array.isArray(modelsRes.json?.data)) {
+    const modelsPayload = safeJson(modelsRes);
+    if (modelsRes.status !== 200 || !Array.isArray(modelsPayload?.data)) {
       return null;
     }
-    const rawModels = modelsRes.json.data;
-    const eligible = rawModels.filter((m) => {
-      if (!m.id || !isLikelyChatModel(m.id))
-        return false;
-      if (!hasCredits) {
-        const promptCost = Number(m.pricing?.prompt ?? 1);
-        const compCost = Number(m.pricing?.completion ?? 1);
-        return m.id.endsWith(":free") || promptCost === 0 && compCost === 0;
+    const rawModels = modelsPayload.data;
+    const eligible = rawModels.filter(
+      (m) => {
+        if (!m.id || !isLikelyChatModel(m.id))
+          return false;
+        if (!hasCredits) {
+          const promptCost = Number(m.pricing?.prompt ?? 1);
+          const compCost = Number(m.pricing?.completion ?? 1);
+          return m.id.endsWith(":free") || promptCost === 0 && compCost === 0;
+        }
+        return true;
       }
-      return true;
-    });
+    );
     const priorityOrder = [
       ":free",
       "google/gemini-2.5",
@@ -1008,14 +1036,15 @@ async function scanOpenAICompatibleEndpoint(key, baseUrl, providerTitle, preferr
     }
     if (res.status === 200) {
       endpointAlive = true;
-      const data = res.json?.data || res.json?.models;
+      const payload = safeJson(res);
+      const data = payload?.data || payload?.models;
       if (Array.isArray(data) && data.length > 0) {
         candidates = data.filter((m) => {
           const id = m.id || m.name || "";
-          return id && isLikelyChatModel(id);
+          return Boolean(id && isLikelyChatModel(id));
         }).map((m) => {
-          const id = m.id || m.name;
-          const name = m.name || m.id;
+          const id = m.id || m.name || "";
+          const name = m.name || m.id || id;
           const desc = m.description || (m.context_length ? `Context: ${m.context_length.toLocaleString()} tokens` : void 0);
           const params = Array.isArray(m.supported_parameters) ? m.supported_parameters : [];
           const hasReasoningParam = params.includes("reasoning") || params.includes("reasoning_effort");
@@ -1047,10 +1076,14 @@ async function scanOpenAICompatibleEndpoint(key, baseUrl, providerTitle, preferr
         method: "GET",
         throw: false
       });
-      if (tagsRes.status === 200 && Array.isArray(tagsRes.json?.models)) {
+      const tagsPayload = safeJson(tagsRes);
+      if (tagsRes.status === 200 && Array.isArray(tagsPayload?.models)) {
         endpointAlive = true;
-        candidates = tagsRes.json.models.filter((m) => (m.name || m.model) && isLikelyChatModel(m.name || m.model)).map((m) => {
-          const id = m.name || m.model;
+        candidates = tagsPayload.models.filter((m) => {
+          const id = m.name || m.model || "";
+          return Boolean(id && isLikelyChatModel(id));
+        }).map((m) => {
+          const id = m.name || m.model || "";
           const paramSize = m.details?.parameter_size ? `${m.details.parameter_size} ` : "";
           const family = m.details?.family ? `(${m.details.family})` : "";
           const desc = `${paramSize}${family}`.trim() || "Local Ollama model";
@@ -1291,9 +1324,6 @@ var ModelsPickerModal = class extends import_obsidian2.Modal {
   }
   async onOpen() {
     this.modalEl.addClass("mod-ai-models-modal");
-    this.modalEl.style.width = "820px";
-    this.modalEl.style.maxWidth = "94vw";
-    this.modalEl.style.maxHeight = "85vh";
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("ai-models-modal-root");
@@ -1315,7 +1345,7 @@ var ModelsPickerModal = class extends import_obsidian2.Modal {
     (0, import_obsidian2.setIcon)(this.rescanBtnEl, "refresh-cw");
     this.rescanBtnEl.addEventListener("click", () => {
       if (!this.isScanning) {
-        this.scanAndPopulateModels();
+        void this.scanAndPopulateModels();
       }
     });
     this.providerBadgeEl = badgeGroup.createSpan({
@@ -1376,11 +1406,13 @@ var ModelsPickerModal = class extends import_obsidian2.Modal {
         this.statusTextEl.setText(`\u26A0\uFE0F Custom model "${val}" failed check: ${check.error}`);
       }
     };
-    customApplyBtn.addEventListener("click", testCustomModel);
-    customInput.addEventListener("keydown", async (e) => {
+    customApplyBtn.addEventListener("click", () => {
+      void testCustomModel();
+    });
+    customInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
-        await testCustomModel();
+        void testCustomModel();
       }
     });
     const synced = getSyncedAttachedModels(this.plugin.settings);
@@ -1491,7 +1523,8 @@ var ModelsPickerModal = class extends import_obsidian2.Modal {
       this.searchInput.focus();
     } catch (err) {
       if (!signal.aborted) {
-        this.statusTextEl.setText(`\u26A0\uFE0F Connection error: ${err?.message || "Unable to reach provider API"}`);
+        const errMsg = err instanceof Error ? err.message : "Unable to reach provider API";
+        this.statusTextEl.setText(`\u26A0\uFE0F Connection error: ${errMsg}`);
         this.allModels = [];
         this.plugin.settings.attachedModels = [];
         await this.plugin.saveSettings();
@@ -1599,8 +1632,8 @@ var ModelsPickerModal = class extends import_obsidian2.Modal {
         attr: { title: "Live-tested 200 OK with your API key" }
       });
     }
-    card.addEventListener("click", async () => {
-      await this.selectModel(m.id);
+    card.addEventListener("click", () => {
+      void this.selectModel(m.id);
     });
   }
   renderModelGrid(filterText) {
@@ -1856,7 +1889,7 @@ var AISidepanelSettingTab = class extends import_obsidian3.PluginSettingTab {
       const card = container.createDiv({ cls: "ai-settings-summary-card synced" });
       const topRow = card.createDiv({ cls: "ai-settings-summary-top" });
       const titleWrap = topRow.createDiv({ cls: "ai-settings-summary-title" });
-      const statusDot = titleWrap.createSpan({ cls: "ai-popup-status-dot online" });
+      titleWrap.createSpan({ cls: "ai-popup-status-dot online" });
       titleWrap.createSpan({
         text: synced.length > 1 ? `Multi-Model Host: ${synced.length} Verified Models on ${providerLabel}` : `Verified 1 Callable Model on ${providerLabel}`
       });
@@ -1894,14 +1927,16 @@ var AISidepanelSettingTab = class extends import_obsidian3.PluginSettingTab {
             title: `${m.name || m.id}${cap.supported ? " (Supports reasoning levels)" : ""} \u2014 Click to set active`
           }
         });
-        chip.addEventListener("click", async () => {
-          this.plugin.settings.model = m.id;
-          await this.plugin.saveSettings();
-          if (this.modelTextInputEl) {
-            this.modelTextInputEl.value = m.id;
-          }
-          this.display();
-          new import_obsidian3.Notice(`Active Model set to: ${m.id}`);
+        chip.addEventListener("click", () => {
+          void (async () => {
+            this.plugin.settings.model = m.id;
+            await this.plugin.saveSettings();
+            if (this.modelTextInputEl) {
+              this.modelTextInputEl.value = m.id;
+            }
+            this.display();
+            new import_obsidian3.Notice(`Active Model set to: ${m.id}`);
+          })();
         });
       }
       if (synced.length > 14) {
@@ -1924,8 +1959,8 @@ var AISidepanelSettingTab = class extends import_obsidian3.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Assistant Panel Settings" });
-    containerEl.createEl("h3", { text: "API Connections" });
+    new import_obsidian3.Setting(containerEl).setName("Assistant Hub Settings").setHeading();
+    new import_obsidian3.Setting(containerEl).setName("API Connections").setHeading();
     const profiles = this.plugin.getProfiles();
     const activeProfile = this.plugin.getActiveProfile();
     new import_obsidian3.Setting(containerEl).setName("Connection Profile").setDesc(
@@ -1998,9 +2033,11 @@ var AISidepanelSettingTab = class extends import_obsidian3.PluginSettingTab {
           text: "Use",
           attr: { type: "button", title: "Set as active connection" }
         });
-        useBtn.addEventListener("click", async () => {
-          await this.plugin.activateProfile(prof.id);
-          this.display();
+        useBtn.addEventListener("click", () => {
+          void (async () => {
+            await this.plugin.activateProfile(prof.id);
+            this.display();
+          })();
         });
       }
       const scanBtn = actionsEl.createEl("button", {
@@ -2010,11 +2047,13 @@ var AISidepanelSettingTab = class extends import_obsidian3.PluginSettingTab {
           title: "Identify & verify callable models for this connection"
         }
       });
-      scanBtn.addEventListener("click", async () => {
-        if (!isActive) {
-          await this.plugin.activateProfile(prof.id);
-        }
-        this.openScannerModal(true);
+      scanBtn.addEventListener("click", () => {
+        void (async () => {
+          if (!isActive) {
+            await this.plugin.activateProfile(prof.id);
+          }
+          this.openScannerModal(true);
+        })();
       });
       const editBtn = actionsEl.createEl("button", {
         text: "Edit",
@@ -2039,24 +2078,26 @@ var AISidepanelSettingTab = class extends import_obsidian3.PluginSettingTab {
           attr: { type: "button", title: `Delete "${prof.name}"` }
         });
         (0, import_obsidian3.setIcon)(delBtn, "trash-2");
-        delBtn.addEventListener("click", async () => {
-          const removed = await this.plugin.deleteProfile(prof.id);
-          if (removed) {
-            new import_obsidian3.Notice(`Deleted connection "${prof.name}".`);
-            this.display();
-          }
+        delBtn.addEventListener("click", () => {
+          void (async () => {
+            const removed = await this.plugin.deleteProfile(prof.id);
+            if (removed) {
+              new import_obsidian3.Notice(`Deleted connection "${prof.name}".`);
+              this.display();
+            }
+          })();
         });
       }
     }
     this.modelsSummaryEl = containerEl.createDiv({ cls: "ai-settings-models-summary" });
     this.renderModelsSummary();
     new import_obsidian3.Setting(containerEl).setName("Temperature").setDesc("Higher values make output more creative, lower values make it more focused and deterministic.").addSlider(
-      (slider) => slider.setLimits(0, 1.5, 0.1).setValue(this.plugin.settings.temperature).setDynamicTooltip().onChange(async (val) => {
+      (slider) => slider.setLimits(0, 1.5, 0.1).setValue(this.plugin.settings.temperature).onChange(async (val) => {
         this.plugin.settings.temperature = val;
         await this.plugin.saveSettings();
       })
     );
-    containerEl.createEl("h3", { text: "Vault Interaction & Agent Tools" });
+    new import_obsidian3.Setting(containerEl).setName("Vault Interaction & Agent Tools").setHeading();
     new import_obsidian3.Setting(containerEl).setName("Enable Vault Agent Tools").setDesc("Allows the AI to search, read, create, edit, move, and delete notes & folders, and interact directly with workspace tabs and the active editor via tool calling.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.enableVaultTools).onChange(async (val) => {
         this.plugin.settings.enableVaultTools = val;
@@ -2076,12 +2117,12 @@ var AISidepanelSettingTab = class extends import_obsidian3.PluginSettingTab {
       })
     );
     new import_obsidian3.Setting(containerEl).setName("Tool Steps per Checkpoint").setDesc("Steps allowed per checkpoint batch before compacting context and handing off (default 25, up to 50).").addSlider(
-      (slider) => slider.setLimits(1, 50, 1).setValue(Math.min(50, Math.max(1, this.plugin.settings.maxToolIterations || 25))).setDynamicTooltip().onChange(async (val) => {
+      (slider) => slider.setLimits(1, 50, 1).setValue(Math.min(50, Math.max(1, this.plugin.settings.maxToolIterations || 25))).onChange(async (val) => {
         this.plugin.settings.maxToolIterations = val;
         await this.plugin.saveSettings();
       })
     );
-    containerEl.createEl("h3", { text: "System Instructions" });
+    new import_obsidian3.Setting(containerEl).setName("System Instructions").setHeading();
     new import_obsidian3.Setting(containerEl).setName("System Prompt").setDesc("Instructions guiding the AI's personality, formatting, and vault reasoning behavior.").addTextArea((textArea) => {
       textArea.inputEl.rows = 8;
       textArea.inputEl.cols = 60;
@@ -2872,16 +2913,12 @@ var VaultToolExecutor = class {
     });
   }
   async trashAbstractFile(item) {
-    if (typeof this.app.fileManager?.trashFile === "function") {
-      await this.app.fileManager.trashFile(item);
-    } else {
-      await this.app.vault.trash(item, true);
-    }
+    await this.app.fileManager.trashFile(item);
   }
   trySaveFileRecoverySnapshot(filePath, content) {
     try {
-      const frPlugin = this.app.internalPlugins?.plugins?.["file-recovery"];
-      const instance = frPlugin?.instance;
+      const appExt = this.app;
+      const instance = appExt.internalPlugins?.plugins?.["file-recovery"]?.instance;
       if (instance && typeof instance.forceAdd === "function") {
         instance.forceAdd(filePath, content);
       }
@@ -2929,11 +2966,12 @@ var VaultToolExecutor = class {
           }
         }
         try {
-          if (typeof leaf.view.data === "string") {
-            leaf.view.data = updatedContent;
+          const viewExt = leaf.view;
+          if (typeof viewExt.data === "string") {
+            viewExt.data = updatedContent;
           }
           leaf.view.setViewData?.(updatedContent, false);
-          leaf.view.clearDirty?.();
+          viewExt.clearDirty?.();
         } catch {
         }
       }
@@ -3216,9 +3254,8 @@ var VaultToolExecutor = class {
         }
       } catch (err) {
         console.error(`Failed to revert change for ${record.path}:`, err);
-        revertedItems.push(
-          `Failed to revert ${record.path}: ${err?.message || String(err)}`
-        );
+        const errMsg = err instanceof Error ? err.message : String(err);
+        revertedItems.push(`Failed to revert ${record.path}: ${errMsg}`);
       }
     }
     return revertedItems;
@@ -3322,9 +3359,8 @@ var VaultToolExecutor = class {
         }
       } catch (err) {
         console.error(`Failed to re-apply change for ${record.path}:`, err);
-        reapplied.push(
-          `Failed to re-apply ${record.path}: ${err?.message || String(err)}`
-        );
+        const errMsg = err instanceof Error ? err.message : String(err);
+        reapplied.push(`Failed to re-apply ${record.path}: ${errMsg}`);
       }
     }
     return reapplied;
@@ -3332,62 +3368,79 @@ var VaultToolExecutor = class {
   async executeTool(name, argsJson, onStatus) {
     let args = {};
     try {
-      args = JSON.parse(argsJson || "{}");
+      const parsed = JSON.parse(argsJson || "{}");
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        args = parsed;
+      }
     } catch {
       return `Error: Failed to parse tool arguments as JSON: ${argsJson}`;
     }
+    const str = (val, fallback = "") => typeof val === "string" ? val : typeof val === "number" || typeof val === "boolean" ? String(val) : fallback;
+    const optStr = (val) => typeof val === "string" ? val : void 0;
+    const intOr = (val, fallback) => {
+      const n = typeof val === "number" ? val : parseInt(str(val), 10);
+      return Number.isFinite(n) && n > 0 ? n : fallback;
+    };
+    const optInt = (val) => {
+      if (val === void 0 || val === null || val === "")
+        return void 0;
+      const n = typeof val === "number" ? val : parseInt(str(val), 10);
+      return Number.isFinite(n) ? n : void 0;
+    };
     try {
       switch (name) {
         case "search_vault":
-          onStatus?.(`Searching vault for "${args.query}"...`);
-          return await this.searchVault(args.query);
+          onStatus?.(`Searching vault for "${str(args.query)}"...`);
+          return await this.searchVault(str(args.query));
         case "list_folders_and_files":
           onStatus?.(`Inspecting vault folders & files...`);
           return await this.listFoldersAndFiles(
-            args.folder,
-            String(args.recursive).toLowerCase() !== "false",
-            parseInt(args.limit, 10) || 100
+            optStr(args.folder),
+            str(args.recursive).toLowerCase() !== "false",
+            intOr(args.limit, 100)
           );
         case "list_notes":
-          onStatus?.(`Listing notes in ${args.folder || "vault"}...`);
-          return await this.listNotes(args.folder, parseInt(args.limit, 10) || 50);
+          onStatus?.(`Listing notes in ${str(args.folder, "vault")}...`);
+          return await this.listNotes(optStr(args.folder), intOr(args.limit, 50));
         case "read_note":
-          onStatus?.(`Reading "${args.path}"...`);
-          return await this.readNote(args.path);
+          onStatus?.(`Reading "${str(args.path)}"...`);
+          return await this.readNote(str(args.path));
         case "read_notes":
           onStatus?.(`Reading batch of notes...`);
           return await this.readNotes(args.paths ?? args.path);
         case "create_note":
-          onStatus?.(`Creating note "${args.path}"...`);
-          return await this.createNote(args.path, args.content);
+          onStatus?.(`Creating note "${str(args.path)}"...`);
+          return await this.createNote(str(args.path), str(args.content));
         case "append_to_note":
-          onStatus?.(`Appending to "${args.path}"...`);
-          return await this.appendToNote(args.path, args.content);
+          onStatus?.(`Appending to "${str(args.path)}"...`);
+          return await this.appendToNote(str(args.path), str(args.content));
         case "patch_note":
-          onStatus?.(`Patching section in "${args.path}"...`);
+          onStatus?.(`Patching section in "${str(args.path)}"...`);
           return await this.patchNote(
-            args.path,
-            args.search_text,
-            args.replace_text
+            str(args.path),
+            str(args.search_text),
+            str(args.replace_text)
           );
         case "replace_note_content":
-          onStatus?.(`Updating note "${args.path}"...`);
-          return await this.replaceNoteContent(args.path, args.content);
+          onStatus?.(`Updating note "${str(args.path)}"...`);
+          return await this.replaceNoteContent(str(args.path), str(args.content));
         case "rename_or_move_note":
-          onStatus?.(`Moving/renaming "${args.path}" \u2192 "${args.new_path}"...`);
-          return await this.renameOrMoveNote(args.path, args.new_path);
+          onStatus?.(
+            `Moving/renaming "${str(args.path)}" \u2192 "${str(args.new_path)}"...`
+          );
+          return await this.renameOrMoveNote(str(args.path), str(args.new_path));
         case "delete_note":
-          onStatus?.(`Deleting note "${args.path}"...`);
-          return await this.deleteNote(args.path);
+          onStatus?.(`Deleting note "${str(args.path)}"...`);
+          return await this.deleteNote(str(args.path));
         case "create_folder":
-          onStatus?.(`Creating folder "${args.path}"...`);
-          return await this.createFolder(args.path);
+          onStatus?.(`Creating folder "${str(args.path)}"...`);
+          return await this.createFolder(str(args.path));
         case "rename_or_move_folder":
-          onStatus?.(`Moving/renaming folder "${args.path}"...`);
-          return await this.renameOrMoveFolder(args.path, args.new_path);
+          onStatus?.(`Moving/renaming folder "${str(args.path)}"...`);
+          return await this.renameOrMoveFolder(str(args.path), str(args.new_path));
         case "delete_folder":
-          onStatus?.(`Deleting folder "${args.path}"...`);
-          return await this.deleteFolder(args.path);
+          onStatus?.(`Deleting folder "${str(args.path)}"...`);
+          return await this.deleteFolder(str(args.path));
         case "get_active_note":
           onStatus?.(`Reading active note...`);
           return await this.getActiveNote();
@@ -3395,47 +3448,58 @@ var VaultToolExecutor = class {
           onStatus?.(`Inspecting workspace tabs & editor...`);
           return await this.getWorkspaceState();
         case "open_note_in_workspace":
-          onStatus?.(`Opening "${args.path}" in workspace...`);
-          return await this.openNoteInWorkspace(args.path, args.open_mode);
+          onStatus?.(`Opening "${str(args.path)}" in workspace...`);
+          return await this.openNoteInWorkspace(
+            str(args.path),
+            optStr(args.open_mode)
+          );
         case "close_workspace_tab":
-          onStatus?.(`Closing tab for "${args.path}"...`);
-          return await this.closeWorkspaceTab(args.path);
+          onStatus?.(`Closing tab for "${str(args.path)}"...`);
+          return await this.closeWorkspaceTab(str(args.path));
         case "edit_active_editor":
           onStatus?.(`Editing active workspace editor...`);
           return await this.editActiveEditor(
-            args.action,
-            args.content,
-            args.start_line ? parseInt(args.start_line, 10) : void 0,
-            args.end_line ? parseInt(args.end_line, 10) : void 0
+            str(args.action),
+            str(args.content),
+            optInt(args.start_line),
+            optInt(args.end_line)
           );
         case "open_graph_view":
           onStatus?.(`Opening Obsidian Graph View...`);
-          return await this.openGraphView(args.mode || "global");
+          return await this.openGraphView(str(args.mode, "global"));
         case "get_graph_neighborhood":
-          onStatus?.(`Analyzing graph connections for "${args.note}"...`);
-          return await this.getGraphNeighborhood(args.note);
+          onStatus?.(`Analyzing graph connections for "${str(args.note)}"...`);
+          return await this.getGraphNeighborhood(str(args.note));
         case "get_graph_analytics":
           onStatus?.(`Analyzing vault graph topology & hubs...`);
           return await this.getGraphAnalytics();
         case "find_graph_path":
           onStatus?.(
-            `Finding graph path from "${args.from_note}" to "${args.to_note}"...`
+            `Finding graph path from "${str(args.from_note)}" to "${str(
+              args.to_note
+            )}"...`
           );
-          return await this.findGraphPath(args.from_note, args.to_note);
+          return await this.findGraphPath(
+            str(args.from_note),
+            str(args.to_note)
+          );
         case "connect_notes_in_graph":
           onStatus?.(
-            `Connecting [[${args.source_note}]] -> [[${args.target_note}]] in graph...`
+            `Connecting [[${str(args.source_note)}]] -> [[${str(
+              args.target_note
+            )}]] in graph...`
           );
           return await this.connectNotesInGraph(
-            args.source_note,
-            args.target_note,
-            args.context_sentence
+            str(args.source_note),
+            str(args.target_note),
+            optStr(args.context_sentence)
           );
         default:
           return `Error: Unknown tool "${name}"`;
       }
     } catch (err) {
-      return `Error executing ${name}: ${err?.message || String(err)}`;
+      const errMsg = err instanceof Error ? err.message : String(err);
+      return `Error executing ${name}: ${errMsg}`;
     }
   }
   // ==========================================
@@ -4163,7 +4227,7 @@ ${openTabs.join(
         }
       });
       if (existingLeaf) {
-        this.app.workspace.revealLeaf(existingLeaf);
+        await this.app.workspace.revealLeaf(existingLeaf);
         return `Focused existing workspace tab for [[${file.path}]].`;
       }
     }
@@ -4185,7 +4249,7 @@ ${openTabs.join(
       leaf = this.app.workspace.getLeaf("tab");
     }
     await leaf.openFile(file);
-    this.app.workspace.revealLeaf(leaf);
+    await this.app.workspace.revealLeaf(leaf);
     return `Opened [[${file.path}]] directly in workspace (${openMode || "new_tab"}).`;
   }
   async closeWorkspaceTab(path) {
@@ -4394,15 +4458,17 @@ ${openTabs.join(
   }
   async openGraphView(mode) {
     try {
+      const appWithCommands = this.app;
       if (mode === "local") {
-        this.app.commands.executeCommandById("graph:open-local");
+        appWithCommands.commands?.executeCommandById?.("graph:open-local");
         return "Opened Local Graph View in Obsidian for the active note.";
       } else {
-        this.app.commands.executeCommandById("graph:open");
+        appWithCommands.commands?.executeCommandById?.("graph:open");
         return "Opened global Graph View in Obsidian.";
       }
     } catch (e) {
-      return `Error opening graph view: ${e.message || String(e)}`;
+      const errMsg = e instanceof Error ? e.message : String(e);
+      return `Error opening graph view: ${errMsg}`;
     }
   }
   async getGraphNeighborhood(noteName) {
@@ -4634,15 +4700,26 @@ function describeToolCall(name, rawArgs) {
   try {
     if (rawArgs && rawArgs.trim()) {
       const obj = JSON.parse(rawArgs);
-      if (obj && typeof obj === "object")
+      if (obj && typeof obj === "object" && !Array.isArray(obj)) {
         parsed = obj;
+      }
     }
   } catch {
     parsed = null;
   }
-  const target = parsed?.path || parsed?.notePath || parsed?.filePath || parsed?.folderPath || parsed?.sourcePath || parsed?.targetPath || parsed?.query || parsed?.folder || "";
-  const shortTarget = typeof target === "string" && target.length > 48 ? `\u2026${target.slice(-45)}` : String(target || "");
+  const getStr = (key) => {
+    const val = parsed?.[key];
+    return typeof val === "string" ? val : "";
+  };
+  const target = getStr("path") || getStr("notePath") || getStr("filePath") || getStr("folderPath") || getStr("sourcePath") || getStr("targetPath") || getStr("query") || getStr("folder") || "";
+  const shortTarget = target.length > 48 ? `\u2026${target.slice(-45)}` : target;
   const pathsCount = Array.isArray(parsed?.paths) ? parsed.paths.length : 0;
+  const oldPath = getStr("oldPath");
+  const newPath = getStr("newPath");
+  const fromNote = getStr("from");
+  const toNote = getStr("to");
+  const sourceNote = getStr("source");
+  const targetNote = getStr("target");
   const labelMap = {
     search_vault: shortTarget ? `Search vault: "${shortTarget}"` : "Search vault",
     list_folders_and_files: shortTarget ? `Browse "${shortTarget}"` : "Browse vault",
@@ -4653,10 +4730,10 @@ function describeToolCall(name, rawArgs) {
     append_to_note: shortTarget ? `Append to "${shortTarget}"` : "Append to note",
     patch_note: shortTarget ? `Patch "${shortTarget}"` : "Patch note",
     replace_note_content: shortTarget ? `Update "${shortTarget}"` : "Update note",
-    rename_or_move_note: parsed?.newPath && parsed?.oldPath ? `Move "${parsed.oldPath}" \u2192 "${parsed.newPath}"` : "Move / rename note",
+    rename_or_move_note: newPath && oldPath ? `Move "${oldPath}" \u2192 "${newPath}"` : "Move / rename note",
     delete_note: shortTarget ? `Delete "${shortTarget}"` : "Delete note",
     create_folder: shortTarget ? `Create folder "${shortTarget}"` : "Create folder",
-    rename_or_move_folder: parsed?.newPath && parsed?.oldPath ? `Move folder "${parsed.oldPath}" \u2192 "${parsed.newPath}"` : "Move / rename folder",
+    rename_or_move_folder: newPath && oldPath ? `Move folder "${oldPath}" \u2192 "${newPath}"` : "Move / rename folder",
     delete_folder: shortTarget ? `Delete folder "${shortTarget}"` : "Delete folder",
     get_active_note: "Read active note",
     get_workspace_state: "Inspect workspace tabs",
@@ -4666,8 +4743,8 @@ function describeToolCall(name, rawArgs) {
     open_graph_view: "Open graph view",
     get_graph_neighborhood: shortTarget ? `Inspect graph links: "${shortTarget}"` : "Inspect graph links",
     get_graph_analytics: "Analyze vault graph",
-    find_graph_path: parsed?.from && parsed?.to ? `Find graph path: "${parsed.from}" \u2192 "${parsed.to}"` : "Find graph path",
-    connect_notes_in_graph: parsed?.source && parsed?.target ? `Link "${parsed.source}" \u2192 "${parsed.target}"` : "Connect notes in graph"
+    find_graph_path: fromNote && toNote ? `Find graph path: "${fromNote}" \u2192 "${toNote}"` : "Find graph path",
+    connect_notes_in_graph: sourceNote && targetNote ? `Link "${sourceNote}" \u2192 "${targetNote}"` : "Connect notes in graph"
   };
   const label = labelMap[name] || (shortTarget ? `${name.replace(/_/g, " ")}: ${shortTarget}` : name.replace(/_/g, " "));
   const argsPreview = parsed ? truncatePreview(JSON.stringify(parsed, null, 2)) : truncatePreview(rawArgs || "");
@@ -4782,7 +4859,7 @@ function cleanProseDashes(markdown) {
   if (!markdown)
     return markdown;
   const sanitizeInlineProse = (segment) => {
-    let out = segment.replace(/([.!?,:;])\s*[—–]\s*/g, "$1 ").replace(/([A-Za-z0-9)"'\]])\s*—\s*([A-Za-z0-9("'\[])/g, "$1, $2").replace(/\s+—\s+/g, ", ").replace(/([A-Za-z)"'\]])\s+–\s+([A-Za-z("'\[])/g, "$1, $2").replace(/([A-Za-z)"'\]])\s+-\s+([A-Za-z("'\[])/g, "$1, $2");
+    let out = segment.replace(/([.!?,:;])\s*[—–]\s*/g, "$1 ").replace(/([A-Za-z0-9)"'\]])\s*—\s*([A-Za-z0-9("'[ ])/g, "$1, $2").replace(/\s+—\s+/g, ", ").replace(/([A-Za-z)"'\]])\s+–\s+([A-Za-z("'[ ])/g, "$1, $2").replace(/([A-Za-z)"'\]])\s+-\s+([A-Za-z("'[ ])/g, "$1, $2");
     out = out.replace(/,\s*,+/g, ",");
     return out;
   };
@@ -4965,245 +5042,240 @@ ${styleGuide}` : styleGuide;
         }
       };
     };
-    try {
-      while (checkpoint < maxCheckpoints) {
-        checkpoint++;
-        let iteration = 0;
-        let checkpointProgressSteps = 0;
-        let checkpointLoopBlocked = false;
-        while (iteration < maxIterationsPerCheckpoint) {
-          iteration++;
-          if (callbacks.signal?.aborted) {
-            throw new Error("Generation was cancelled.");
+    while (checkpoint < maxCheckpoints) {
+      checkpoint++;
+      let iteration = 0;
+      let checkpointProgressSteps = 0;
+      let checkpointLoopBlocked = false;
+      while (iteration < maxIterationsPerCheckpoint) {
+        iteration++;
+        if (callbacks.signal?.aborted) {
+          throw new Error("Generation was cancelled.");
+        }
+        const compactedMessages = compactToolHistoryMessages(currentMessages);
+        const response = await this.callProviderWithRetry(
+          compactedMessages,
+          makeReasoningCallbacks(false),
+          false
+        );
+        if (this.settings.enableVaultTools && response.tool_calls && response.tool_calls.length > 0) {
+          currentMessages.push(response);
+          const batchSignature = response.tool_calls.map((tc) => `${tc.function.name}:${tc.function.arguments}`).join("|");
+          if (batchSignature === lastToolSignature) {
+            consecutiveDuplicateCount++;
+          } else {
+            lastToolSignature = batchSignature;
+            consecutiveDuplicateCount = 1;
           }
-          const compactedMessages = compactToolHistoryMessages(currentMessages);
-          const response = await this.callProviderWithRetry(
-            compactedMessages,
-            makeReasoningCallbacks(false),
-            false
-          );
-          if (this.settings.enableVaultTools && response.tool_calls && response.tool_calls.length > 0) {
-            currentMessages.push(response);
-            const batchSignature = response.tool_calls.map((tc) => `${tc.function.name}:${tc.function.arguments}`).join("|");
-            if (batchSignature === lastToolSignature) {
-              consecutiveDuplicateCount++;
-            } else {
-              lastToolSignature = batchSignature;
-              consecutiveDuplicateCount = 1;
-            }
-            if (consecutiveDuplicateCount >= 3) {
-              checkpointLoopBlocked = true;
-              for (const toolCall of response.tool_calls) {
-                const desc = describeToolCall(
-                  toolCall.function.name,
-                  toolCall.function.arguments
-                );
-                const skipActivity = {
-                  id: `${toolCall.id || toolCall.function.name}_loop_${turnActivities.length}`,
-                  name: toolCall.function.name,
-                  label: `Skipped repeat: ${desc.label}`,
-                  argsPreview: desc.argsPreview,
-                  resultPreview: "Loop detected; asked assistant to move to the next step.",
-                  status: "error",
-                  startedAt: Date.now(),
-                  durationMs: 0
-                };
-                turnActivities.push(skipActivity);
-                callbacks.onToolActivity?.({ ...skipActivity });
-                currentMessages.push({
-                  role: "tool",
-                  tool_call_id: toolCall.id,
-                  name: toolCall.function.name,
-                  content: `Loop detected: "${toolCall.function.name}" was already called repeatedly with identical arguments. Do NOT repeat it again. Proceed to the next step, try a different approach, or provide your final answer.`
-                });
-              }
-              callbacks.onReset?.();
-              callbacks.onStatus?.("Breaking tool loop...");
-              continue;
-            }
-            checkpointLoopBlocked = false;
+          if (consecutiveDuplicateCount >= 3) {
+            checkpointLoopBlocked = true;
             for (const toolCall of response.tool_calls) {
-              if (callbacks.signal?.aborted) {
-                throw new Error("Generation was cancelled.");
-              }
               const desc = describeToolCall(
                 toolCall.function.name,
                 toolCall.function.arguments
               );
-              const activity = {
-                id: `${toolCall.id || toolCall.function.name}_${turnActivities.length}`,
+              const skipActivity = {
+                id: `${toolCall.id || toolCall.function.name}_loop_${turnActivities.length}`,
                 name: toolCall.function.name,
-                label: desc.label,
+                label: `Skipped repeat: ${desc.label}`,
                 argsPreview: desc.argsPreview,
-                status: "running",
-                startedAt: Date.now()
+                resultPreview: "Loop detected; asked assistant to move to the next step.",
+                status: "error",
+                startedAt: Date.now(),
+                durationMs: 0
               };
-              turnActivities.push(activity);
-              callbacks.onToolActivity?.({ ...activity });
-              const cpPrefix = checkpoint > 1 ? `[Batch ${checkpoint}] ` : "";
-              callbacks.onStatus?.(
-                `${cpPrefix}${desc.label} (${iteration}/${maxIterationsPerCheckpoint})...`
-              );
-              let result = "";
-              try {
-                result = await this.toolExecutor.executeTool(
-                  toolCall.function.name,
-                  toolCall.function.arguments,
-                  callbacks.onStatus
-                );
-                const formatted = formatToolResultPreview(result);
-                activity.status = formatted.isError ? "error" : "completed";
-                activity.resultPreview = formatted.preview;
-              } catch (toolErr) {
-                activity.status = "error";
-                activity.resultPreview = truncatePreview(
-                  toolErr?.message || String(toolErr)
-                );
-                activity.durationMs = Date.now() - activity.startedAt;
-                callbacks.onToolActivity?.({ ...activity });
-                throw toolErr;
-              }
-              checkpointProgressSteps++;
-              totalStepsExecuted++;
-              activity.durationMs = Date.now() - activity.startedAt;
-              callbacks.onToolActivity?.({ ...activity });
+              turnActivities.push(skipActivity);
+              callbacks.onToolActivity?.({ ...skipActivity });
               currentMessages.push({
                 role: "tool",
                 tool_call_id: toolCall.id,
                 name: toolCall.function.name,
-                content: result
-              });
-            }
-            if (iteration === maxIterationsPerCheckpoint - 2) {
-              currentMessages.push({
-                role: "user",
-                content: "SYSTEM NOTE: Only 2 tool steps remain in this checkpoint batch. Wrap up current edits cleanly or batch remaining reads."
+                content: `Loop detected: "${toolCall.function.name}" was already called repeatedly with identical arguments. Do NOT repeat it again. Proceed to the next step, try a different approach, or provide your final answer.`
               });
             }
             callbacks.onReset?.();
-            callbacks.onStatus?.("Synthesizing response...");
+            callbacks.onStatus?.("Breaking tool loop...");
             continue;
           }
-          if (checkpoint === 1 && iteration === 1 && this.settings.enableVaultTools && (!response.tool_calls || response.tool_calls.length === 0) && this.toolExecutor.getTurnChanges().length === 0) {
-            const lastUserMsg = conversation.filter((m) => m.role === "user").pop();
-            const userPromptText = lastUserMsg?.content || "";
-            if (isMutationIntent(userPromptText) && claimsUnexecutedAction(response.content)) {
-              callbacks.onReset?.();
-              callbacks.onStatus?.(
-                "Applying changes directly to note in Obsidian..."
-              );
-              currentMessages.push(response);
-              currentMessages.push({
-                role: "user",
-                content: "SYSTEM ACTION REQUIRED: You described fixing, updating, or modifying the note, but you did NOT call any vault tool (such as patch_note, replace_note_content, or edit_active_editor). The note in Obsidian has NOT been updated! You must call the appropriate tool right now to actually execute and apply these changes to the note in Obsidian."
-              });
-              continue;
+          checkpointLoopBlocked = false;
+          for (const toolCall of response.tool_calls) {
+            if (callbacks.signal?.aborted) {
+              throw new Error("Generation was cancelled.");
             }
-          }
-          const changes = this.toolExecutor.getAndClearTurnChanges();
-          if (changes.length > 0) {
-            response.noteChanges = changes;
-          }
-          return attachTurnTrace(response);
-        }
-        if (checkpoint < maxCheckpoints && checkpointProgressSteps > 0 && !checkpointLoopBlocked) {
-          callbacks.onReset?.();
-          callbacks.onStatus?.(
-            `Checkpoint ${checkpoint} reached (${totalStepsExecuted} steps) \u2014 compacting context & continuing...`
-          );
-          const handoffMessages = [
-            ...compactToolHistoryMessages(currentMessages, 4),
-            {
-              role: "user",
-              content: "CHECKPOINT HANDOFF: Create a concise, factual state handoff (do NOT call tools now). List: 1) Notes/folders already inspected or modified, 2) Exact changes already applied, 3) Exact remaining items/steps still needed to finish the user's request."
-            }
-          ];
-          let handoffSummary = "";
-          try {
-            const handoffMsg = await this.callProviderWithRetry(
-              handoffMessages,
-              makeReasoningCallbacks(true),
-              true
+            const desc = describeToolCall(
+              toolCall.function.name,
+              toolCall.function.arguments
             );
-            handoffSummary = (handoffMsg.content || "").trim();
-          } catch (handoffErr) {
-            if (isCancellationError(handoffErr, callbacks.signal)) {
-              throw handoffErr;
+            const activity = {
+              id: `${toolCall.id || toolCall.function.name}_${turnActivities.length}`,
+              name: toolCall.function.name,
+              label: desc.label,
+              argsPreview: desc.argsPreview,
+              status: "running",
+              startedAt: Date.now()
+            };
+            turnActivities.push(activity);
+            callbacks.onToolActivity?.({ ...activity });
+            const cpPrefix = checkpoint > 1 ? `[Batch ${checkpoint}] ` : "";
+            callbacks.onStatus?.(
+              `${cpPrefix}${desc.label} (${iteration}/${maxIterationsPerCheckpoint})...`
+            );
+            let result = "";
+            try {
+              result = await this.toolExecutor.executeTool(
+                toolCall.function.name,
+                toolCall.function.arguments,
+                callbacks.onStatus
+              );
+              const formatted = formatToolResultPreview(result);
+              activity.status = formatted.isError ? "error" : "completed";
+              activity.resultPreview = formatted.preview;
+            } catch (toolErr) {
+              activity.status = "error";
+              const errMsg = toolErr instanceof Error ? toolErr.message : String(toolErr);
+              activity.resultPreview = truncatePreview(errMsg);
+              activity.durationMs = Date.now() - activity.startedAt;
+              callbacks.onToolActivity?.({ ...activity });
+              throw toolErr;
             }
+            checkpointProgressSteps++;
+            totalStepsExecuted++;
+            activity.durationMs = Date.now() - activity.startedAt;
+            callbacks.onToolActivity?.({ ...activity });
+            currentMessages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              name: toolCall.function.name,
+              content: result
+            });
           }
-          const modifiedPaths = Array.from(
-            new Set(
-              this.toolExecutor.getTurnChanges().map((c) => `${c.type}: ${c.path}`)
-            )
-          );
-          const handoffBlock = handoffSummary || `Completed ${totalStepsExecuted} tool steps so far.${modifiedPaths.length > 0 ? ` Vault changes applied: ${modifiedPaths.join(", ")}.` : ""}`;
-          const cpActivity = {
-            id: `checkpoint_${checkpoint}_${Date.now()}`,
-            name: "checkpoint_handoff",
-            label: `Checkpoint ${checkpoint} complete \u2014 auto-continuing`,
-            resultPreview: truncatePreview(handoffBlock),
-            status: "completed",
-            startedAt: Date.now(),
-            durationMs: 0
-          };
-          turnActivities.push(cpActivity);
-          callbacks.onToolActivity?.({ ...cpActivity });
-          currentMessages = [
-            ...conversation,
-            {
-              role: "assistant",
-              content: `[Checkpoint ${checkpoint} Progress Summary]
-${handoffBlock}`
-            },
-            {
+          if (iteration === maxIterationsPerCheckpoint - 2) {
+            currentMessages.push({
               role: "user",
-              content: "Continue seamlessly from this checkpoint using vault tools until the entire task is complete. Do NOT re-do completed work."
-            }
-          ];
-          lastToolSignature = "";
-          consecutiveDuplicateCount = 0;
-          callbacks.onStatus?.(
-            `Auto-continuing task (checkpoint ${checkpoint + 1}/${maxCheckpoints})...`
-          );
+              content: "SYSTEM NOTE: Only 2 tool steps remain in this checkpoint batch. Wrap up current edits cleanly or batch remaining reads."
+            });
+          }
+          callbacks.onReset?.();
+          callbacks.onStatus?.("Synthesizing response...");
           continue;
         }
-        break;
-      }
-      callbacks.onReset?.();
-      callbacks.onStatus?.("Summarizing progress (checkpoint limit reached)...");
-      const summaryMessages = [
-        ...compactToolHistoryMessages(currentMessages, 6),
-        {
-          role: "user",
-          content: "You have reached the autonomous step limit for this run. Do NOT attempt any more tool calls. Clearly summarize what you have completed, any changes made, and what remains if the task is not yet finished."
+        if (checkpoint === 1 && iteration === 1 && this.settings.enableVaultTools && (!response.tool_calls || response.tool_calls.length === 0) && this.toolExecutor.getTurnChanges().length === 0) {
+          const lastUserMsg = conversation.filter((m) => m.role === "user").pop();
+          const userPromptText = lastUserMsg?.content || "";
+          if (isMutationIntent(userPromptText) && claimsUnexecutedAction(response.content)) {
+            callbacks.onReset?.();
+            callbacks.onStatus?.(
+              "Applying changes directly to note in Obsidian..."
+            );
+            currentMessages.push(response);
+            currentMessages.push({
+              role: "user",
+              content: "SYSTEM ACTION REQUIRED: You described fixing, updating, or modifying the note, but you did NOT call any vault tool (such as patch_note, replace_note_content, or edit_active_editor). The note in Obsidian has NOT been updated! You must call the appropriate tool right now to actually execute and apply these changes to the note in Obsidian."
+            });
+            continue;
+          }
         }
-      ];
-      try {
-        const finalSummary = await this.callProviderWithRetry(
-          summaryMessages,
-          makeReasoningCallbacks(false),
-          true
+        const changes = this.toolExecutor.getAndClearTurnChanges();
+        if (changes.length > 0) {
+          response.noteChanges = changes;
+        }
+        return attachTurnTrace(response);
+      }
+      if (checkpoint < maxCheckpoints && checkpointProgressSteps > 0 && !checkpointLoopBlocked) {
+        callbacks.onReset?.();
+        callbacks.onStatus?.(
+          `Checkpoint ${checkpoint} reached (${totalStepsExecuted} steps) \u2014 compacting context & continuing...`
         );
-        const turnChanges = this.toolExecutor.getAndClearTurnChanges();
-        if (turnChanges.length > 0) {
-          finalSummary.noteChanges = turnChanges;
+        const handoffMessages = [
+          ...compactToolHistoryMessages(currentMessages, 4),
+          {
+            role: "user",
+            content: "CHECKPOINT HANDOFF: Create a concise, factual state handoff (do NOT call tools now). List: 1) Notes/folders already inspected or modified, 2) Exact changes already applied, 3) Exact remaining items/steps still needed to finish the user's request."
+          }
+        ];
+        let handoffSummary = "";
+        try {
+          const handoffMsg = await this.callProviderWithRetry(
+            handoffMessages,
+            makeReasoningCallbacks(true),
+            true
+          );
+          handoffSummary = (handoffMsg.content || "").trim();
+        } catch (handoffErr) {
+          if (isCancellationError(handoffErr, callbacks.signal)) {
+            throw handoffErr;
+          }
         }
-        finalSummary.hitToolLimit = true;
-        return attachTurnTrace(finalSummary);
-      } catch (synthErr) {
-        if (isCancellationError(synthErr, callbacks.signal)) {
-          throw synthErr;
-        }
-        const fallbackChanges = this.toolExecutor.getAndClearTurnChanges();
-        return attachTurnTrace({
-          role: "assistant",
-          content: `Paused after ${totalStepsExecuted} tool steps across ${checkpoint} checkpoint(s). Click **Continue Task** below to resume right where I left off.`,
-          noteChanges: fallbackChanges.length > 0 ? fallbackChanges : void 0,
-          hitToolLimit: true
-        });
+        const modifiedPaths = Array.from(
+          new Set(
+            this.toolExecutor.getTurnChanges().map((c) => `${c.type}: ${c.path}`)
+          )
+        );
+        const handoffBlock = handoffSummary || `Completed ${totalStepsExecuted} tool steps so far.${modifiedPaths.length > 0 ? ` Vault changes applied: ${modifiedPaths.join(", ")}.` : ""}`;
+        const cpActivity = {
+          id: `checkpoint_${checkpoint}_${Date.now()}`,
+          name: "checkpoint_handoff",
+          label: `Checkpoint ${checkpoint} complete \u2014 auto-continuing`,
+          resultPreview: truncatePreview(handoffBlock),
+          status: "completed",
+          startedAt: Date.now(),
+          durationMs: 0
+        };
+        turnActivities.push(cpActivity);
+        callbacks.onToolActivity?.({ ...cpActivity });
+        currentMessages = [
+          ...conversation,
+          {
+            role: "assistant",
+            content: `[Checkpoint ${checkpoint} Progress Summary]
+${handoffBlock}`
+          },
+          {
+            role: "user",
+            content: "Continue seamlessly from this checkpoint using vault tools until the entire task is complete. Do NOT re-do completed work."
+          }
+        ];
+        lastToolSignature = "";
+        consecutiveDuplicateCount = 0;
+        callbacks.onStatus?.(
+          `Auto-continuing task (checkpoint ${checkpoint + 1}/${maxCheckpoints})...`
+        );
+        continue;
       }
-    } catch (err) {
-      throw err;
+      break;
+    }
+    callbacks.onReset?.();
+    callbacks.onStatus?.("Summarizing progress (checkpoint limit reached)...");
+    const summaryMessages = [
+      ...compactToolHistoryMessages(currentMessages, 6),
+      {
+        role: "user",
+        content: "You have reached the autonomous step limit for this run. Do NOT attempt any more tool calls. Clearly summarize what you have completed, any changes made, and what remains if the task is not yet finished."
+      }
+    ];
+    try {
+      const finalSummary = await this.callProviderWithRetry(
+        summaryMessages,
+        makeReasoningCallbacks(false),
+        true
+      );
+      const turnChanges = this.toolExecutor.getAndClearTurnChanges();
+      if (turnChanges.length > 0) {
+        finalSummary.noteChanges = turnChanges;
+      }
+      finalSummary.hitToolLimit = true;
+      return attachTurnTrace(finalSummary);
+    } catch (synthErr) {
+      if (isCancellationError(synthErr, callbacks.signal)) {
+        throw synthErr;
+      }
+      const fallbackChanges = this.toolExecutor.getAndClearTurnChanges();
+      return attachTurnTrace({
+        role: "assistant",
+        content: `Paused after ${totalStepsExecuted} tool steps across ${checkpoint} checkpoint(s). Click **Continue Task** below to resume right where I left off.`,
+        noteChanges: fallbackChanges.length > 0 ? fallbackChanges : void 0,
+        hitToolLimit: true
+      });
     }
   }
   async callProviderWithRetry(messages, callbacks, disableTools = false) {
@@ -5244,30 +5316,34 @@ ${handoffBlock}`
     }
   }
   /**
-   * Executes a streaming POST request and yields each parsed SSE `data:` payload.
+   * Executes an SSE POST request via Obsidian's `requestUrl` and yields each parsed `data:` payload.
    */
   async streamSSE(endpoint, headers, body, signal, providerLabel, onData) {
-    const res = await fetch(endpoint, {
+    if (signal?.aborted) {
+      throw new Error("Generation was cancelled.");
+    }
+    const res = await (0, import_obsidian5.requestUrl)({
+      url: endpoint,
       method: "POST",
       headers,
       body: JSON.stringify(body),
-      signal
+      throw: false
     });
-    if (!res.ok) {
-      const errText = await res.text();
-      const retryAfterMs = parseRetryAfterMs(res.headers.get("retry-after"));
+    if (signal?.aborted) {
+      throw new Error("Generation was cancelled.");
+    }
+    if (res.status >= 400) {
+      const retryAfterMs = parseRetryAfterMs(res.headers?.["retry-after"]);
       throw new ApiHttpError(
-        `${providerLabel} Error ${res.status}: ${errText}`,
+        `${providerLabel} Error ${res.status}: ${res.text}`,
         res.status,
         retryAfterMs
       );
     }
-    if (!res.body) {
+    const rawText = res.text || "";
+    if (!rawText.trim()) {
       throw new Error("No response body received from server.");
     }
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
     const processLine = (rawLine) => {
       const trimmed = rawLine.trim();
       if (!trimmed || !trimmed.startsWith("data:"))
@@ -5279,28 +5355,19 @@ ${handoffBlock}`
         return true;
       return onData(dataStr) === true;
     };
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done)
-          break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-        for (const line of lines) {
-          if (processLine(line))
-            return;
-        }
+    let processedAny = false;
+    for (const line of rawText.split(/\r?\n/)) {
+      if (signal?.aborted) {
+        throw new Error("Generation was cancelled.");
       }
-      buffer += decoder.decode();
-      if (buffer.trim()) {
-        for (const line of buffer.split("\n")) {
-          if (processLine(line))
-            return;
-        }
+      if (line.trim().startsWith("data:")) {
+        processedAny = true;
       }
-    } finally {
-      reader.releaseLock();
+      if (processLine(line))
+        return;
+    }
+    if (!processedAny) {
+      onData(rawText.trim());
     }
   }
   // ==========================================
@@ -5431,13 +5498,19 @@ ${handoffBlock}`
         const choice = json.choices?.[0];
         if (!choice)
           return;
-        const reasoningDelta = choice.delta?.reasoning_content ?? choice.delta?.reasoning;
+        const reasoningDelta = choice.delta?.reasoning_content ?? choice.delta?.reasoning ?? choice.message?.reasoning_content ?? choice.message?.reasoning;
         if (typeof reasoningDelta === "string" && reasoningDelta.length > 0) {
           callbacks.onReasoningChunk?.(reasoningDelta);
         }
-        if (choice.delta?.content) {
-          accumulatedText += choice.delta.content;
-          callbacks.onChunk(choice.delta.content);
+        const contentDelta = choice.delta?.content ?? choice.message?.content;
+        if (contentDelta) {
+          accumulatedText += contentDelta;
+          callbacks.onChunk(contentDelta);
+        }
+        if (choice.message?.tool_calls && !choice.delta?.tool_calls) {
+          choice.message.tool_calls.forEach((tc, idx) => {
+            toolCallsMap[idx] = tc;
+          });
         }
         if (choice.delta?.tool_calls) {
           for (const tc of choice.delta.tool_calls) {
@@ -5471,8 +5544,12 @@ ${handoffBlock}`
     };
   }
   async fallbackOpenAIRequestUrl(endpoint, headers, payload, callbacks) {
-    const nonStreamPayload = { ...payload, stream: false };
-    if (endpoint.includes("dashscope") || String(payload.model || "").toLowerCase().includes("qwen3")) {
+    const nonStreamPayload = {
+      ...payload,
+      stream: false
+    };
+    const modelStr = typeof payload.model === "string" ? payload.model.toLowerCase() : "";
+    if (endpoint.includes("dashscope") || modelStr.includes("qwen3")) {
       nonStreamPayload.enable_thinking = false;
     }
     const response = await (0, import_obsidian5.requestUrl)({
@@ -5489,20 +5566,20 @@ ${handoffBlock}`
       );
     }
     const json = response.json;
-    const choice = json.choices?.[0];
-    const message = choice?.message || {};
-    const reasoningText = message.reasoning_content ?? message.reasoning;
+    const choice = json?.choices?.[0];
+    const message = choice?.message;
+    const reasoningText = message?.reasoning_content ?? message?.reasoning;
     if (typeof reasoningText === "string" && reasoningText.length > 0) {
       callbacks.onReasoningChunk?.(reasoningText);
     }
-    const content = message.content || "";
+    const content = message?.content || "";
     if (content) {
       callbacks.onChunk(content);
     }
     return {
       role: "assistant",
       content,
-      tool_calls: message.tool_calls
+      tool_calls: message?.tool_calls
     };
   }
   // ==========================================
@@ -5545,7 +5622,10 @@ ${handoffBlock}`
         for (const tc of m.tool_calls) {
           let input = {};
           try {
-            input = JSON.parse(tc.function.arguments);
+            const parsedInput = JSON.parse(tc.function.arguments);
+            if (parsedInput && typeof parsedInput === "object" && !Array.isArray(parsedInput)) {
+              input = parsedInput;
+            }
           } catch {
           }
           contentBlocks.push({
@@ -5568,10 +5648,11 @@ ${handoffBlock}`
     }
     const modelId = this.settings.model || "claude-3-5-sonnet-20241022";
     const effectiveSystemPrompt = this.getEffectiveSystemPrompt();
+    const maxTokensBase = this.settings.maxTokens || 4096;
     const payload = {
       model: modelId,
       messages: anthropicMessages,
-      max_tokens: this.settings.maxTokens || 4096,
+      max_tokens: maxTokensBase,
       temperature: this.settings.temperature ?? 0.7,
       system: effectiveSystemPrompt || void 0
     };
@@ -5584,7 +5665,7 @@ ${handoffBlock}`
       const effort = this.settings.reasoningEffort || "medium";
       const budget = this.getThinkingBudgetTokens(effort, "anthropic");
       payload.thinking = { type: "enabled", budget_tokens: budget };
-      payload.max_tokens = Math.max(payload.max_tokens || 4096, budget + 4096);
+      payload.max_tokens = Math.max(maxTokensBase, budget + 4096);
       delete payload.temperature;
       injectedThinking = true;
     }
@@ -5714,16 +5795,16 @@ ${handoffBlock}`
     const data = res.json;
     let accumulatedText = "";
     const toolCalls = [];
-    if (Array.isArray(data.content)) {
+    if (Array.isArray(data?.content)) {
       for (const block of data.content) {
-        if (block.type === "text") {
+        if (block.type === "text" && block.text) {
           accumulatedText += block.text;
           callbacks.onChunk(block.text);
         } else if (block.type === "thinking" && block.thinking) {
           callbacks.onReasoningChunk?.(block.thinking);
-        } else if (block.type === "tool_use") {
+        } else if (block.type === "tool_use" && block.name) {
           toolCalls.push({
-            id: block.id,
+            id: block.id || `call_anthropic_${Date.now()}_${toolCalls.length}`,
             type: "function",
             function: {
               name: block.name,
@@ -5771,7 +5852,10 @@ ${handoffBlock}`
         for (const tc of m.tool_calls) {
           let args = {};
           try {
-            args = JSON.parse(tc.function.arguments);
+            const parsedArgs = JSON.parse(tc.function.arguments);
+            if (parsedArgs && typeof parsedArgs === "object" && !Array.isArray(parsedArgs)) {
+              args = parsedArgs;
+            }
           } catch {
           }
           parts.push({
@@ -5789,12 +5873,13 @@ ${handoffBlock}`
         });
       }
     }
+    const generationConfig = {
+      temperature: this.settings.temperature ?? 0.7,
+      maxOutputTokens: this.settings.maxTokens || 4096
+    };
     const payload = {
       contents,
-      generationConfig: {
-        temperature: this.settings.temperature ?? 0.7,
-        maxOutputTokens: this.settings.maxTokens || 4096
-      }
+      generationConfig
     };
     const reasoningCap = getActiveModelReasoningCapability(this.settings);
     let injectedThinking = false;
@@ -5802,16 +5887,16 @@ ${handoffBlock}`
       const effort = this.settings.reasoningEffort || "medium";
       const baseModel = normalizeModelBaseId(model);
       if (baseModel.startsWith("gemini-3")) {
-        payload.generationConfig.thinkingConfig = {
+        generationConfig.thinkingConfig = {
           thinkingLevel: effort === "low" ? "LOW" : effort === "medium" ? "MEDIUM" : "HIGH"
         };
       } else {
         const budget = this.getThinkingBudgetTokens(effort, "gemini");
-        payload.generationConfig.thinkingConfig = {
+        generationConfig.thinkingConfig = {
           thinkingBudget: budget
         };
-        payload.generationConfig.maxOutputTokens = Math.max(
-          payload.generationConfig.maxOutputTokens || 4096,
+        generationConfig.maxOutputTokens = Math.max(
+          this.settings.maxTokens || 4096,
           8192
         );
       }
@@ -5846,14 +5931,15 @@ ${handoffBlock}`
       if (err instanceof ApiHttpError) {
         if (err.status === 400 && injectedThinking && this.isReasoningParamError(err.message)) {
           this.unsupportedReasoningModels.add(model);
+          const cleanGenConfig = {
+            ...generationConfig,
+            maxOutputTokens: this.settings.maxTokens || 4096
+          };
+          delete cleanGenConfig.thinkingConfig;
           const cleanPayload = {
             ...payload,
-            generationConfig: {
-              ...payload.generationConfig,
-              maxOutputTokens: this.settings.maxTokens || 4096
-            }
+            generationConfig: cleanGenConfig
           };
-          delete cleanPayload.generationConfig.thinkingConfig;
           return await this.streamGeminiResponse(
             streamEndpoint,
             cleanPayload,
@@ -5882,9 +5968,10 @@ ${handoffBlock}`
           return;
         }
         if (data.error) {
+          const errCode = typeof data.error.code === "number" ? data.error.code : 500;
           throw new ApiHttpError(
-            `Gemini Error ${data.error.code || 500}: ${data.error.message || JSON.stringify(data.error)}`,
-            data.error.code || 500
+            `Gemini Error ${errCode}: ${data.error.message || JSON.stringify(data.error)}`,
+            errCode
           );
         }
         const candidate = data.candidates?.[0];
@@ -5931,7 +6018,7 @@ ${handoffBlock}`
       );
     }
     const data = res.json;
-    const candidate = data.candidates?.[0];
+    const candidate = data?.candidates?.[0];
     let accumulatedText = "";
     const toolCalls = [];
     if (candidate?.content?.parts) {
@@ -6197,24 +6284,27 @@ var RevertConfirmModal = class extends import_obsidian6.Modal {
     this.confirmTextEl = this.confirmBtnEl.createSpan({
       text: this.getConfirmButtonLabel()
     });
-    this.confirmBtnEl.addEventListener("click", async () => {
-      if (this.isSubmitting || this.selectedIndices.size === 0)
-        return;
-      this.isSubmitting = true;
-      this.confirmBtnEl.setAttr("disabled", "true");
-      cancelBtn.setAttr("disabled", "true");
-      this.confirmTextEl.setText("Reverting...");
-      const selectedChanges = items.filter((_, idx) => this.selectedIndices.has(idx)).map((it) => it.record);
-      try {
-        await this.options.onConfirm(selectedChanges, this.removeMessage);
-        this.close();
-      } catch (err) {
-        this.isSubmitting = false;
-        this.confirmBtnEl.removeAttribute("disabled");
-        cancelBtn.removeAttribute("disabled");
-        this.confirmTextEl.setText(this.getConfirmButtonLabel());
-        new import_obsidian6.Notice(`Failed to revert changes: ${err?.message || String(err)}`);
-      }
+    this.confirmBtnEl.addEventListener("click", () => {
+      void (async () => {
+        if (this.isSubmitting || this.selectedIndices.size === 0)
+          return;
+        this.isSubmitting = true;
+        this.confirmBtnEl.setAttr("disabled", "true");
+        cancelBtn.setAttr("disabled", "true");
+        this.confirmTextEl.setText("Reverting...");
+        const selectedChanges = items.filter((_, idx) => this.selectedIndices.has(idx)).map((it) => it.record);
+        try {
+          await this.options.onConfirm(selectedChanges, this.removeMessage);
+          this.close();
+        } catch (err) {
+          this.isSubmitting = false;
+          this.confirmBtnEl.removeAttribute("disabled");
+          cancelBtn.removeAttribute("disabled");
+          this.confirmTextEl.setText(this.getConfirmButtonLabel());
+          const errMsg = err instanceof Error ? err.message : String(err);
+          new import_obsidian6.Notice(`Failed to revert changes: ${errMsg}`);
+        }
+      })();
     });
   }
   getConfirmButtonLabel() {
@@ -6471,7 +6561,7 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
       });
       const iconSpan = itemEl.createSpan({ cls: "ai-drawer-item-icon" });
       (0, import_obsidian7.setIcon)(iconSpan, "message-square");
-      const titleSpan = itemEl.createSpan({
+      itemEl.createSpan({
         cls: "ai-drawer-item-title",
         text: conv.title || "Untitled Chat"
       });
@@ -6483,10 +6573,10 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
       (0, import_obsidian7.setIcon)(deleteBtn, "trash-2");
       deleteBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        this.handleDeleteConversation(conv.id);
+        void this.handleDeleteConversation(conv.id);
       });
       itemEl.addEventListener("click", () => {
-        this.switchConversation(conv.id);
+        void this.switchConversation(conv.id);
         if (this.rootEl.clientWidth < 400) {
           this.toggleDrawer(false);
         }
@@ -6628,14 +6718,16 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
       attr: { title: "New Conversation" }
     });
     (0, import_obsidian7.setIcon)(newChatBtn, "plus");
-    newChatBtn.addEventListener("click", () => this.handleNewChat());
+    newChatBtn.addEventListener("click", () => {
+      void this.handleNewChat();
+    });
     const deleteConvBtn = actionsBox.createEl("button", {
       cls: "clickable-icon",
       attr: { title: "Delete this conversation" }
     });
     (0, import_obsidian7.setIcon)(deleteConvBtn, "trash-2");
     deleteConvBtn.addEventListener("click", () => {
-      this.handleDeleteConversation(this.currentConversationId);
+      void this.handleDeleteConversation(this.currentConversationId);
     });
     const settingsBtn = actionsBox.createEl("button", {
       cls: "clickable-icon",
@@ -6643,8 +6735,9 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
     });
     (0, import_obsidian7.setIcon)(settingsBtn, "settings");
     settingsBtn.addEventListener("click", () => {
-      this.app.setting.open();
-      this.app.setting.openTabById(this.plugin.manifest.id);
+      const settingApi = this.app.setting;
+      settingApi?.open?.();
+      settingApi?.openTabById?.(this.plugin.manifest.id);
     });
   }
   refreshFromSettings() {
@@ -6755,8 +6848,10 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
       }
     });
     this.inputEl.addEventListener("input", () => {
-      this.inputEl.style.height = "auto";
-      this.inputEl.style.height = Math.min(this.inputEl.scrollHeight, 180) + "px";
+      this.inputEl.setCssStyles({ height: "auto" });
+      this.inputEl.setCssStyles({
+        height: `${Math.min(this.inputEl.scrollHeight, 180)}px`
+      });
       this.syncInlineMentionPopup();
     });
     this.inputEl.addEventListener("click", () => {
@@ -6797,7 +6892,7 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
       }
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        this.handleSend();
+        void this.handleSend();
       }
     });
     const controlsRow = this.inputWrapperEl.createDiv({
@@ -6860,7 +6955,7 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
       if (this.isGenerating) {
         this.handleStop();
       } else {
-        this.handleSend();
+        void this.handleSend();
       }
     });
   }
@@ -6980,7 +7075,7 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
         };
       }
     }
-    const atMatch = lineSegment.match(/(?:^|\s)@([^\n\[\]]*)$/);
+    const atMatch = lineSegment.match(/(?:^|\s)@([^\n[\]]*)$/);
     if (atMatch) {
       const query = atMatch[1];
       if (query.length <= 45) {
@@ -7176,8 +7271,10 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
     const updated = val.slice(0, start) + linkText + val.slice(end);
     this.inputEl.value = updated;
     const newCursor = start + linkText.length;
-    this.inputEl.style.height = "auto";
-    this.inputEl.style.height = Math.min(this.inputEl.scrollHeight, 180) + "px";
+    this.inputEl.setCssStyles({ height: "auto" });
+    this.inputEl.setCssStyles({
+      height: `${Math.min(this.inputEl.scrollHeight, 180)}px`
+    });
     const alreadyAttached = this.attachedMentions.some(
       (m) => m.kind === candidate.kind && m.path === candidate.path
     );
@@ -7282,13 +7379,15 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
         const check = item.createSpan({ cls: "ai-model-check" });
         (0, import_obsidian7.setIcon)(check, "check");
       }
-      item.addEventListener("click", async (e) => {
+      item.addEventListener("click", (e) => {
         e.stopPropagation();
-        this.plugin.settings.reasoningEffort = opt.value;
-        await this.plugin.saveSettings();
-        this.closeReasoningPopup();
-        this.updateReasoningPill();
-        new import_obsidian7.Notice(`Reasoning effort set to: ${opt.label}`);
+        void (async () => {
+          this.plugin.settings.reasoningEffort = opt.value;
+          await this.plugin.saveSettings();
+          this.closeReasoningPopup();
+          this.updateReasoningPill();
+          new import_obsidian7.Notice(`Reasoning effort set to: ${opt.label}`);
+        })();
       });
     }
   }
@@ -7391,9 +7490,9 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
       const statusMessage = showAllProfiles ? `All Profiles \u2022 ${entries.length} Verified Model${entries.length === 1 ? "" : "s"}` : !hasBaseUrl ? "Base URL not configured (Set in Settings)" : !hasKeyOrLocal ? "No API key (Set in Settings)" : attached2.length > 1 ? `${endpointLabel} \u2022 ${attached2.length} Models Verified` : attached2.length === 1 ? `${endpointLabel} \u2022 1 Model Verified` : `${endpointLabel}: Ready (Scan to verify models)`;
       statusTextEl.setText(statusMessage);
       if (showAllProfiles) {
-        urlInfoBox.style.display = "none";
+        urlInfoBox.addClass("hidden");
       } else {
-        urlInfoBox.style.display = "flex";
+        urlInfoBox.removeClass("hidden");
         const urlStr = this.plugin.settings.baseUrl || "Not set";
         urlValueEl.setText(urlStr);
         urlValueEl.setAttr("title", urlStr);
@@ -7422,19 +7521,21 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
           }
         });
         profBtns.push({ id: prof.id, el: pBtn });
-        pBtn.addEventListener("click", async (e) => {
+        pBtn.addEventListener("click", (e) => {
           e.stopPropagation();
-          showAllProfiles = false;
-          if (prof.id !== this.plugin.settings.activeProfileId) {
-            await this.plugin.activateProfile(prof.id);
-            this.closeModelPopup();
-            this.openModelPopup();
-          } else {
-            allBtn.removeClass("active");
-            pBtn.addClass("active");
-            activeCategory = "all";
-            refreshPopupCatalog();
-          }
+          void (async () => {
+            showAllProfiles = false;
+            if (prof.id !== this.plugin.settings.activeProfileId) {
+              await this.plugin.activateProfile(prof.id);
+              this.closeModelPopup();
+              this.openModelPopup();
+            } else {
+              allBtn.removeClass("active");
+              pBtn.addClass("active");
+              activeCategory = "all";
+              refreshPopupCatalog();
+            }
+          })();
         });
       }
       allBtn.addEventListener("click", (e) => {
@@ -7582,18 +7683,20 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
           text: catMeta.shortLabel
         });
         tagsGroup.createSpan({ cls: "ai-model-live-tag", text: "LIVE" });
-        modelCard.addEventListener("click", async () => {
-          if (entry.profileId && entry.profileId !== this.plugin.settings.activeProfileId) {
-            await this.plugin.activateProfile(entry.profileId, m.id);
-            new import_obsidian7.Notice(
-              `Switched to ${entry.profileName} \u2022 ${m.name || m.id}`
-            );
-          } else {
-            this.plugin.settings.model = m.id;
-            await this.plugin.saveSettings();
-            new import_obsidian7.Notice(`Active Model set to: ${m.name || m.id}`);
-          }
-          this.closeModelPopup();
+        modelCard.addEventListener("click", () => {
+          void (async () => {
+            if (entry.profileId && entry.profileId !== this.plugin.settings.activeProfileId) {
+              await this.plugin.activateProfile(entry.profileId, m.id);
+              new import_obsidian7.Notice(
+                `Switched to ${entry.profileName} \u2022 ${m.name || m.id}`
+              );
+            } else {
+              this.plugin.settings.model = m.id;
+              await this.plugin.saveSettings();
+              new import_obsidian7.Notice(`Active Model set to: ${m.name || m.id}`);
+            }
+            this.closeModelPopup();
+          })();
         });
       }
     };
@@ -7657,11 +7760,13 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
         );
       }
     };
-    setBtn.addEventListener("click", handlePopupCustomTest);
-    customInput.addEventListener("keydown", async (e) => {
+    setBtn.addEventListener("click", () => {
+      void handlePopupCustomTest();
+    });
+    customInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
-        await handlePopupCustomTest();
+        void handlePopupCustomTest();
       }
     });
     const browseAllBtn = popupFooter.createEl("button", {
@@ -7725,7 +7830,7 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
     }
     this.closeMentionPopup();
     this.inputEl.value = "";
-    this.inputEl.style.height = "auto";
+    this.inputEl.setCssStyles({ height: "auto" });
     const pendingMentions = [...this.attachedMentions];
     this.attachedMentions = [];
     this.renderAttachedMentionsBar();
@@ -7785,7 +7890,7 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
         while (renderRequested && !streamDone) {
           renderRequested = false;
           const snapshot = assistantMsg.content;
-          const tempDiv = document.createElement("div");
+          const tempDiv = createDiv();
           await import_obsidian7.MarkdownRenderer.render(
             this.app,
             snapshot || "*(Thinking...)*",
@@ -7870,12 +7975,13 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
     } catch (err) {
       streamDone = true;
       this.liveAssistantMsg = null;
+      const errMsg = err instanceof Error ? err.message : String(err);
       if (assistantMsg.toolActivities) {
         for (const step of assistantMsg.toolActivities) {
           if (step.status === "running") {
             step.status = "error";
             step.durationMs = Date.now() - step.startedAt;
-            step.resultPreview = err?.message && String(err.message).includes("cancelled") ? "Cancelled by user." : err?.message || "Interrupted";
+            step.resultPreview = errMsg.includes("cancelled") ? "Cancelled by user." : errMsg || "Interrupted";
           }
         }
       }
@@ -7887,7 +7993,7 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
       if (hadActivity) {
         assistantMsg.canResumeTask = true;
       }
-      if (err.message && err.message.includes("cancelled")) {
+      if (errMsg.includes("cancelled")) {
         if (!assistantMsg.content.trim() && hadActivity) {
           assistantMsg.content = "*Generation paused by user.*";
         }
@@ -7897,10 +8003,10 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
       } else {
         assistantMsg.content += `
 
-\u274C **Error:** ${err?.message || String(err)}`;
+\u274C **Error:** ${errMsg}`;
         await this.renderMessages();
         await this.saveActiveConversation();
-        new import_obsidian7.Notice(`AI Error: ${err?.message || String(err)}`);
+        new import_obsidian7.Notice(`AI Error: ${errMsg}`);
       }
     } finally {
       streamDone = true;
@@ -8180,7 +8286,9 @@ ${descriptions.join("\n")}`,
           }
         });
         (0, import_obsidian7.setIcon)(revertBtn, "undo");
-        revertBtn.addEventListener("click", () => this.handleRevertMessage(i, false));
+        revertBtn.addEventListener("click", () => {
+          void this.handleRevertMessage(i, false);
+        });
       }
       if (msg.role === "assistant") {
         const activityHostEl = msgWrapper.createDiv({
@@ -8224,24 +8332,26 @@ ${descriptions.join("\n")}`,
           text: "Continue Task",
           attr: { title: "Resume remaining steps from where the assistant stopped" }
         });
-        continueBtn.addEventListener("click", async () => {
-          if (this.isGenerating)
-            return;
-          const wasInterrupted = Boolean(msg.canResumeTask && !msg.hitToolLimit);
-          msg.hitToolLimit = false;
-          msg.canResumeTask = false;
-          if (wasInterrupted && msg.toolActivities && msg.toolActivities.length > 0) {
-            const doneSteps = msg.toolActivities.filter((s) => s.status === "completed").slice(-12).map((s) => `- ${s.label}`);
-            this.inputEl.value = doneSteps.length > 0 ? `The previous run was interrupted. Completed tool steps so far:
+        continueBtn.addEventListener("click", () => {
+          void (async () => {
+            if (this.isGenerating)
+              return;
+            const wasInterrupted = Boolean(msg.canResumeTask && !msg.hitToolLimit);
+            msg.hitToolLimit = false;
+            msg.canResumeTask = false;
+            if (wasInterrupted && msg.toolActivities && msg.toolActivities.length > 0) {
+              const doneSteps = msg.toolActivities.filter((s) => s.status === "completed").slice(-12).map((s) => `- ${s.label}`);
+              this.inputEl.value = doneSteps.length > 0 ? `The previous run was interrupted. Completed tool steps so far:
 ${doneSteps.join(
-              "\n"
-            )}
+                "\n"
+              )}
 
 Please resume from here and complete the remaining steps.` : "The previous run was interrupted. Please continue and complete the remaining steps.";
-          } else {
-            this.inputEl.value = "Please continue and complete the remaining steps.";
-          }
-          await this.handleSend();
+            } else {
+              this.inputEl.value = "Please continue and complete the remaining steps.";
+            }
+            await this.handleSend();
+          })();
         });
       }
     }
@@ -8251,8 +8361,7 @@ Please resume from here and complete the remaining steps.` : "The previous run w
     tables.forEach((table) => {
       if (table.parentElement?.classList.contains("ai-table-wrap"))
         return;
-      const wrap = document.createElement("div");
-      wrap.className = "ai-table-wrap";
+      const wrap = createDiv({ cls: "ai-table-wrap" });
       table.parentNode?.insertBefore(wrap, table);
       wrap.appendChild(table);
     });
@@ -8295,12 +8404,12 @@ Please resume from here and complete the remaining steps.` : "The previous run w
   }
   async openChangedItem(record, msgIndex) {
     if (record.itemKind === "folder" || record.type === "deleted") {
-      this.handleRevertMessage(msgIndex, true);
+      void this.handleRevertMessage(msgIndex, true);
       return;
     }
     const abstract = this.app.vault.getAbstractFileByPath(record.path);
     if (!(abstract instanceof import_obsidian7.TFile)) {
-      this.handleRevertMessage(msgIndex, true);
+      void this.handleRevertMessage(msgIndex, true);
       return;
     }
     const leaf = this.app.workspace.getLeaf(false);
@@ -8429,7 +8538,7 @@ Please resume from here and complete the remaining steps.` : "The previous run w
       });
       reapplyBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        this.handleReapplyMessage(msgIndex);
+        void this.handleReapplyMessage(msgIndex);
       });
     }
   }
@@ -8605,9 +8714,11 @@ Please resume from here and complete the remaining steps.` : "The previous run w
       attr: { title: "Copy to Clipboard" }
     });
     (0, import_obsidian7.setIcon)(copyBtn, "copy");
-    copyBtn.addEventListener("click", async () => {
-      await navigator.clipboard.writeText(content);
-      new import_obsidian7.Notice("Copied to clipboard!");
+    copyBtn.addEventListener("click", () => {
+      void (async () => {
+        await navigator.clipboard.writeText(content);
+        new import_obsidian7.Notice("Copied to clipboard!");
+      })();
     });
     const insertBtn = actionsBox.createEl("button", {
       cls: "ai-action-btn",
@@ -8628,12 +8739,16 @@ Please resume from here and complete the remaining steps.` : "The previous run w
       attr: { title: "Create New Note from Response" }
     });
     (0, import_obsidian7.setIcon)(createNoteBtn, "file-plus");
-    createNoteBtn.addEventListener("click", async () => {
-      const title = `AI Note - ${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)} - ${Date.now().toString().slice(-4)}`;
-      const filename = `${title}.md`;
-      const file = await this.app.vault.create(filename, content);
-      await this.app.workspace.getLeaf(false).openFile(file);
-      new import_obsidian7.Notice(`Created note [[${filename}]]`);
+    createNoteBtn.addEventListener("click", () => {
+      void (async () => {
+        const title = `AI Note - ${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)} - ${Date.now().toString().slice(-4)}`;
+        const filename = `${title}.md`;
+        const file = await this.app.vault.create(filename, content);
+        if (file instanceof import_obsidian7.TFile) {
+          await this.app.workspace.getLeaf(false).openFile(file);
+        }
+        new import_obsidian7.Notice(`Created note [[${filename}]]`);
+      })();
     });
   }
   scrollToBottom() {
@@ -8666,13 +8781,13 @@ var AISidepanelPlugin = class extends import_obsidian8.Plugin {
       (leaf) => new AiSidepanelView(leaf, this)
     );
     this.addRibbonIcon("sparkles", "Toggle Assistant Panel", () => {
-      this.toggleView();
+      void this.toggleView();
     });
     this.addCommand({
       id: "toggle-ai-sidepanel",
       name: "Toggle Assistant Panel",
       callback: () => {
-        this.toggleView();
+        void this.toggleView();
       }
     });
     this.addCommand({
@@ -8725,11 +8840,10 @@ ${selection}
     });
     this.addSettingTab(new AISidepanelSettingTab(this.app, this));
     this.app.workspace.onLayoutReady(() => {
-      this.activateView();
+      void this.activateView();
     });
   }
   onunload() {
-    this.app.workspace.detachLeavesOfType(AI_VIEW_TYPE);
   }
   async loadSettings() {
     if (this.loadSettingsPromise) {
@@ -8740,7 +8854,7 @@ ${selection}
         const pluginData = await this.loadData();
         let vaultConfig = null;
         try {
-          const configDir = this.app.vault.configDir || ".obsidian";
+          const configDir = this.app.vault.configDir;
           const vaultConfigPath = `${configDir}/ai-sidepanel-config.json`;
           if (await this.app.vault.adapter.exists(vaultConfigPath)) {
             const raw = await this.app.vault.adapter.read(vaultConfigPath);
@@ -8751,38 +8865,28 @@ ${selection}
         } catch (err) {
           console.warn("[AI Sidepanel] Could not read vault-level config backup:", err);
         }
-        let localConfig = null;
-        try {
-          if (typeof window !== "undefined" && window.localStorage) {
-            const raw = window.localStorage.getItem("obsidian_ai_sidepanel_persistent_config");
-            if (raw && raw.trim()) {
-              localConfig = JSON.parse(raw);
-            }
-          }
-        } catch (err) {
-          console.warn("[AI Sidepanel] Could not read localStorage config backup:", err);
-        }
         const s1 = pluginData?.settings || (pluginData && !pluginData.settings && !pluginData.conversations ? pluginData : null) || {};
         const s2 = vaultConfig?.settings || (vaultConfig && !vaultConfig.settings ? vaultConfig : null) || {};
-        const s3 = localConfig?.settings || (localConfig && !localConfig.settings ? localConfig : null) || {};
-        const mergedSettings = Object.assign({}, DEFAULT_SETTINGS);
-        Object.assign(mergedSettings, s3);
-        Object.assign(mergedSettings, s2);
-        Object.assign(mergedSettings, s1);
+        const mergedSettings = Object.assign(
+          {},
+          DEFAULT_SETTINGS,
+          s2,
+          s1
+        );
         if (!mergedSettings.apiKey?.trim()) {
-          const recoveredKey = (s2.apiKey || s3.apiKey || "").trim();
+          const recoveredKey = (s2.apiKey || "").trim();
           if (recoveredKey) {
             mergedSettings.apiKey = recoveredKey;
           }
         }
         if (!mergedSettings.baseUrl?.trim()) {
-          const recoveredUrl = (s2.baseUrl || s3.baseUrl || "").trim();
+          const recoveredUrl = (s2.baseUrl || "").trim();
           if (recoveredUrl) {
             mergedSettings.baseUrl = recoveredUrl;
           }
         }
         if (!mergedSettings.model?.trim()) {
-          const recoveredModel = (s2.model || s3.model || "").trim();
+          const recoveredModel = (s2.model || "").trim();
           if (recoveredModel) {
             mergedSettings.model = recoveredModel;
           }
@@ -8790,8 +8894,6 @@ ${selection}
         if (!mergedSettings.attachedModels || mergedSettings.attachedModels.length === 0) {
           if (s2.attachedModels && s2.attachedModels.length > 0) {
             mergedSettings.attachedModels = s2.attachedModels;
-          } else if (s3.attachedModels && s3.attachedModels.length > 0) {
-            mergedSettings.attachedModels = s3.attachedModels;
           }
         }
         if (!mergedSettings.systemPrompt || !mergedSettings.systemPrompt.includes("CORE ACTION MANDATE") || !mergedSettings.systemPrompt.includes("FORMATTING & STYLE")) {
@@ -8808,8 +8910,8 @@ ${selection}
         mergedSettings.provider = inferProtocolFromBaseUrl(mergedSettings.baseUrl);
         this.settings = mergedSettings;
         this.ensureProfilesInitialized();
-        this.conversations = pluginData?.conversations || vaultConfig?.conversations || localConfig?.conversations || [];
-        this.activeConversationId = pluginData?.activeConversationId || vaultConfig?.activeConversationId || localConfig?.activeConversationId || "";
+        this.conversations = pluginData?.conversations || vaultConfig?.conversations || [];
+        this.activeConversationId = pluginData?.activeConversationId || vaultConfig?.activeConversationId || "";
         this.isSettingsLoaded = true;
         if (mergedSettings.apiKey || mergedSettings.baseUrl) {
           await this.persistToAllStores();
@@ -8992,7 +9094,7 @@ ${selection}
       console.warn("[AI Sidepanel] Could not save to plugin data.json:", err);
     }
     try {
-      const configDir = this.app.vault.configDir || ".obsidian";
+      const configDir = this.app.vault.configDir;
       const vaultConfigPath = `${configDir}/ai-sidepanel-config.json`;
       await this.app.vault.adapter.write(
         vaultConfigPath,
@@ -9000,16 +9102,6 @@ ${selection}
       );
     } catch (err) {
       console.warn("[AI Sidepanel] Could not save to vault-level config backup:", err);
-    }
-    try {
-      if (typeof window !== "undefined" && window.localStorage) {
-        window.localStorage.setItem(
-          "obsidian_ai_sidepanel_persistent_config",
-          JSON.stringify(payload)
-        );
-      }
-    } catch (err) {
-      console.warn("[AI Sidepanel] Could not save to localStorage config backup:", err);
     }
   }
   notifyViewSettingsChanged() {
@@ -9046,10 +9138,13 @@ ${selection}
     const leaves = workspace.getLeavesOfType(AI_VIEW_TYPE);
     const rightSplit = workspace.rightSplit;
     if (leaves.length > 0 && rightSplit) {
-      const isCollapsed = rightSplit.collapsed;
-      const isVisible = leaves.some((leaf) => leaf.view instanceof AiSidepanelView && leaf.containerEl?.offsetParent !== null);
+      const isCollapsed = Boolean(rightSplit.collapsed);
+      const isVisible = leaves.some((leaf) => {
+        const leafExt = leaf;
+        return leaf.view instanceof AiSidepanelView && leafExt.containerEl?.offsetParent !== null;
+      });
       if (!isCollapsed && isVisible) {
-        rightSplit.collapse();
+        rightSplit.collapse?.();
         return;
       }
     }
@@ -9072,20 +9167,20 @@ ${selection}
       }
     }
     if (leaf) {
-      workspace.revealLeaf(leaf);
+      await workspace.revealLeaf(leaf);
       const rightSplit = workspace.rightSplit;
       if (rightSplit) {
         if (rightSplit.collapsed) {
-          rightSplit.expand();
+          rightSplit.expand?.();
         }
-        const currentSize = rightSplit.size || rightSplit.containerEl?.clientWidth;
+        const currentSize = rightSplit.size || rightSplit.containerEl?.clientWidth || 0;
         if (!currentSize || currentSize < 280) {
           if (typeof rightSplit.setSize === "function") {
             rightSplit.setSize(280);
           }
         }
       }
-      return leaf.view;
+      return leaf.view instanceof AiSidepanelView ? leaf.view : null;
     }
     return null;
   }

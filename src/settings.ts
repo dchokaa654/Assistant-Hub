@@ -243,7 +243,7 @@ export class AISidepanelSettingTab extends PluginSettingTab {
 
       const topRow = card.createDiv({ cls: "ai-settings-summary-top" });
       const titleWrap = topRow.createDiv({ cls: "ai-settings-summary-title" });
-      const statusDot = titleWrap.createSpan({ cls: "ai-popup-status-dot online" });
+      titleWrap.createSpan({ cls: "ai-popup-status-dot online" });
       titleWrap.createSpan({
         text:
           synced.length > 1
@@ -291,14 +291,16 @@ export class AISidepanelSettingTab extends PluginSettingTab {
             } — Click to set active`,
           },
         });
-        chip.addEventListener("click", async () => {
-          this.plugin.settings.model = m.id;
-          await this.plugin.saveSettings();
-          if (this.modelTextInputEl) {
-            this.modelTextInputEl.value = m.id;
-          }
-          this.display();
-          new Notice(`Active Model set to: ${m.id}`);
+        chip.addEventListener("click", () => {
+          void (async () => {
+            this.plugin.settings.model = m.id;
+            await this.plugin.saveSettings();
+            if (this.modelTextInputEl) {
+              this.modelTextInputEl.value = m.id;
+            }
+            this.display();
+            new Notice(`Active Model set to: ${m.id}`);
+          })();
         });
       }
 
@@ -325,10 +327,10 @@ export class AISidepanelSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    containerEl.createEl("h2", { text: "Assistant Panel Settings" });
+    new Setting(containerEl).setName("Assistant Hub Settings").setHeading();
 
     // --- API Connections ---
-    containerEl.createEl("h3", { text: "API Connections" });
+    new Setting(containerEl).setName("API Connections").setHeading();
 
     const profiles = this.plugin.getProfiles();
     const activeProfile = this.plugin.getActiveProfile();
@@ -434,9 +436,11 @@ export class AISidepanelSettingTab extends PluginSettingTab {
           text: "Use",
           attr: { type: "button", title: "Set as active connection" },
         });
-        useBtn.addEventListener("click", async () => {
-          await this.plugin.activateProfile(prof.id);
-          this.display();
+        useBtn.addEventListener("click", () => {
+          void (async () => {
+            await this.plugin.activateProfile(prof.id);
+            this.display();
+          })();
         });
       }
 
@@ -447,11 +451,13 @@ export class AISidepanelSettingTab extends PluginSettingTab {
           title: "Identify & verify callable models for this connection",
         },
       });
-      scanBtn.addEventListener("click", async () => {
-        if (!isActive) {
-          await this.plugin.activateProfile(prof.id);
-        }
-        this.openScannerModal(true);
+      scanBtn.addEventListener("click", () => {
+        void (async () => {
+          if (!isActive) {
+            await this.plugin.activateProfile(prof.id);
+          }
+          this.openScannerModal(true);
+        })();
       });
 
       const editBtn = actionsEl.createEl("button", {
@@ -478,12 +484,14 @@ export class AISidepanelSettingTab extends PluginSettingTab {
           attr: { type: "button", title: `Delete "${prof.name}"` },
         });
         setIcon(delBtn, "trash-2");
-        delBtn.addEventListener("click", async () => {
-          const removed = await this.plugin.deleteProfile(prof.id);
-          if (removed) {
-            new Notice(`Deleted connection "${prof.name}".`);
-            this.display();
-          }
+        delBtn.addEventListener("click", () => {
+          void (async () => {
+            const removed = await this.plugin.deleteProfile(prof.id);
+            if (removed) {
+              new Notice(`Deleted connection "${prof.name}".`);
+              this.display();
+            }
+          })();
         });
       }
     }
@@ -499,7 +507,6 @@ export class AISidepanelSettingTab extends PluginSettingTab {
         slider
           .setLimits(0.0, 1.5, 0.1)
           .setValue(this.plugin.settings.temperature)
-          .setDynamicTooltip()
           .onChange(async (val) => {
             this.plugin.settings.temperature = val;
             await this.plugin.saveSettings();
@@ -507,7 +514,7 @@ export class AISidepanelSettingTab extends PluginSettingTab {
       );
 
     // --- Obsidian Vault Interaction ---
-    containerEl.createEl("h3", { text: "Vault Interaction & Agent Tools" });
+    new Setting(containerEl).setName("Vault Interaction & Agent Tools").setHeading();
 
     new Setting(containerEl)
       .setName("Enable Vault Agent Tools")
@@ -552,7 +559,6 @@ export class AISidepanelSettingTab extends PluginSettingTab {
         slider
           .setLimits(1, 50, 1)
           .setValue(Math.min(50, Math.max(1, this.plugin.settings.maxToolIterations || 25)))
-          .setDynamicTooltip()
           .onChange(async (val) => {
             this.plugin.settings.maxToolIterations = val;
             await this.plugin.saveSettings();
@@ -560,7 +566,7 @@ export class AISidepanelSettingTab extends PluginSettingTab {
       );
 
     // --- Custom System Prompt ---
-    containerEl.createEl("h3", { text: "System Instructions" });
+    new Setting(containerEl).setName("System Instructions").setHeading();
 
     new Setting(containerEl)
       .setName("System Prompt")

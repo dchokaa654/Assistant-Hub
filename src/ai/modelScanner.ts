@@ -202,15 +202,95 @@ function prioritizeMultiModelCandidates(
   return selected;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+interface ApiErrorPayload {
+  error?: {
+    message?: string;
+    code?: string | number;
+  };
+  message?: string;
+  choices?: unknown[];
+  id?: string;
+  content?: unknown;
+  candidates?: unknown[];
+  usageMetadata?: unknown;
 }
 
-function extractApiErrorReason(status: number, json: any, text: string): string {
+interface GeminiModelRecord {
+  name?: string;
+  displayName?: string;
+  description?: string;
+  supportedGenerationMethods?: string[];
+  inputTokenLimit?: number;
+  thinking?: boolean;
+}
+
+interface AnthropicModelRecord {
+  id: string;
+  display_name?: string;
+  created_at?: string;
+}
+
+interface OpenRouterKeyPayload {
+  data?: {
+    is_free_tier?: boolean;
+    limit_remaining?: number;
+  };
+}
+
+interface OpenRouterCreditsPayload {
+  data?: {
+    total_credits?: number;
+    total_usage?: number;
+  };
+}
+
+interface OpenAICatalogModelRecord {
+  id?: string;
+  name?: string;
+  description?: string;
+  context_length?: number;
+  pricing?: {
+    prompt?: number | string;
+    completion?: number | string;
+  };
+  supported_parameters?: string[];
+}
+
+interface OllamaTagModelRecord {
+  name?: string;
+  model?: string;
+  details?: {
+    parameter_size?: string;
+    family?: string;
+  };
+}
+
+function safeJson<T>(res: { json?: unknown; text?: string }): T | null {
+  try {
+    if (res.json !== undefined && res.json !== null) {
+      return res.json as T;
+    }
+  } catch {
+    // Ignore non-JSON response payload
+  }
+  return null;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function extractApiErrorReason(
+  status: number,
+  json: ApiErrorPayload | null,
+  text: string
+): string {
+  const errCode =
+    json?.error?.code !== undefined ? String(json.error.code) : "";
   const msg =
     json?.error?.message ||
     json?.message ||
-    json?.error?.code ||
+    errCode ||
     (typeof text === "string" ? text.slice(0, 140) : "");
   return `${status}${msg ? `: ${msg}` : ""}`;
 }
@@ -257,7 +337,7 @@ async function verifyOpenAICompatibleModel(
   }
 
   const buildBody = (useMaxCompletionTokens = false, tokens = 1) => {
-    const payload: any = {
+    const payload: Record<string, unknown> = {
       model: modelId,
       messages: [{ role: "user", content: "hi" }],
       stream: false,
@@ -285,19 +365,16 @@ async function verifyOpenAICompatibleModel(
       body: buildBody(false, 1),
       throw: false,
     });
+    const json = safeJson<ApiErrorPayload>(res);
 
     if (res.status === 200) {
-      let json: any = null;
-      try {
-        json = res.json;
-      } catch {}
       if (json?.error) {
         return {
           ok: false,
           reason: extractApiErrorReason(200, json, res.text),
         };
       }
-      if (json && (Array.isArray(json.choices) || json.id)) {
+      if (json && (Array.isArray(json.choices) || Boolean(json.id))) {
         return { ok: true };
       }
       return { ok: false, reason: "Unexpected non-chat response format" };
@@ -307,7 +384,7 @@ async function verifyOpenAICompatibleModel(
       return {
         ok: false,
         fatalAuth: true,
-        reason: extractApiErrorReason(401, res.json, res.text),
+        reason: extractApiErrorReason(401, json, res.text),
       };
     }
 
@@ -321,12 +398,13 @@ async function verifyOpenAICompatibleModel(
           body: buildBody(true, 16),
           throw: false,
         });
-        if (retryRes.status === 200 && !retryRes.json?.error) {
+        const retryJson = safeJson<ApiErrorPayload>(retryRes);
+        if (retryRes.status === 200 && !retryJson?.error) {
           return { ok: true };
         }
         return {
           ok: false,
-          reason: extractApiErrorReason(retryRes.status, retryRes.json, retryRes.text),
+          reason: extractApiErrorReason(retryRes.status, retryJson, retryRes.text),
         };
       }
       if (
@@ -341,12 +419,13 @@ async function verifyOpenAICompatibleModel(
           body: buildBody(false, 16),
           throw: false,
         });
-        if (retryRes.status === 200 && !retryRes.json?.error) {
+        const retryJson = safeJson<ApiErrorPayload>(retryRes);
+        if (retryRes.status === 200 && !retryJson?.error) {
           return { ok: true };
         }
         return {
           ok: false,
-          reason: extractApiErrorReason(retryRes.status, retryRes.json, retryRes.text),
+          reason: extractApiErrorReason(retryRes.status, retryJson, retryRes.text),
         };
       }
     }
@@ -367,17 +446,20 @@ async function verifyOpenAICompatibleModel(
       }
       return {
         ok: false,
-        reason: extractApiErrorReason(429, res.json, res.text),
+        reason: extractApiErrorReason(429, json, res.text),
       };
     }
 
     return {
       ok: false,
       fatalAuth: isAuthenticationErrorText(res.text),
-      reason: extractApiErrorReason(res.status, res.json, res.text),
+      reason: extractApiErrorReason(res.status, json, res.text),
     };
-  } catch (err: any) {
-    return { ok: false, reason: err?.message || "Network error" };
+  } catch (err: unknown) {
+    return {
+      ok: false,
+      reason: err instanceof Error ? err.message : "Network error",
+    };
   }
 }
 
@@ -421,8 +503,9 @@ async function verifyGeminiModel(
       }),
       throw: false,
     });
+    const json = safeJson<ApiErrorPayload>(res);
 
-    if (res.status === 200 && (res.json?.candidates || res.json?.usageMetadata)) {
+    if (res.status === 200 && (Boolean(json?.candidates) || Boolean(json?.usageMetadata))) {
       return { ok: true };
     }
 
@@ -430,7 +513,7 @@ async function verifyGeminiModel(
       return {
         ok: false,
         fatalAuth: true,
-        reason: extractApiErrorReason(res.status, res.json, res.text),
+        reason: extractApiErrorReason(res.status, json, res.text),
       };
     }
 
@@ -439,24 +522,27 @@ async function verifyGeminiModel(
       const isZeroQuota =
         lowerText.includes("limit: 0") ||
         lowerText.includes("quota_limit_value\":\"0") ||
-        lowerText.includes("free_tier") && lowerText.includes("limit: 0");
+        (lowerText.includes("free_tier") && lowerText.includes("limit: 0"));
       if (!isZeroQuota && attempt === 0) {
         await sleep(1000);
         return await verifyGeminiModel(baseUrl, key, modelId, 1);
       }
       return {
         ok: false,
-        reason: extractApiErrorReason(429, res.json, res.text),
+        reason: extractApiErrorReason(429, json, res.text),
       };
     }
 
     return {
       ok: false,
       fatalAuth: isAuthenticationErrorText(res.text),
-      reason: extractApiErrorReason(res.status, res.json, res.text),
+      reason: extractApiErrorReason(res.status, json, res.text),
     };
-  } catch (err: any) {
-    return { ok: false, reason: err?.message || "Network error" };
+  } catch (err: unknown) {
+    return {
+      ok: false,
+      reason: err instanceof Error ? err.message : "Network error",
+    };
   }
 }
 
@@ -486,15 +572,16 @@ async function verifyAnthropicModel(
       }),
       throw: false,
     });
+    const json = safeJson<ApiErrorPayload>(res);
 
-    if (res.status === 200 && (res.json?.content || res.json?.id)) {
+    if (res.status === 200 && (Boolean(json?.content) || Boolean(json?.id))) {
       return { ok: true };
     }
     if (res.status === 401) {
       return {
         ok: false,
         fatalAuth: true,
-        reason: extractApiErrorReason(401, res.json, res.text),
+        reason: extractApiErrorReason(401, json, res.text),
       };
     }
     if (res.status === 429 && attempt === 0) {
@@ -504,10 +591,13 @@ async function verifyAnthropicModel(
     return {
       ok: false,
       fatalAuth: isAuthenticationErrorText(res.text),
-      reason: extractApiErrorReason(res.status, res.json, res.text),
+      reason: extractApiErrorReason(res.status, json, res.text),
     };
-  } catch (err: any) {
-    return { ok: false, reason: err?.message || "Network error" };
+  } catch (err: unknown) {
+    return {
+      ok: false,
+      reason: err instanceof Error ? err.message : "Network error",
+    };
   }
 }
 
@@ -590,12 +680,13 @@ async function scanGemini(
   const url = `${root}/v1beta/models?key=${encodeURIComponent(key)}`;
   try {
     const res = await requestUrl({ url, method: "GET", throw: false });
-    if (res.status !== 200 || !Array.isArray(res.json?.models)) {
+    const payload = safeJson<{ models?: GeminiModelRecord[] }>(res);
+    if (res.status !== 200 || !Array.isArray(payload?.models)) {
       return null;
     }
 
     const candidates: AvailableModelItem[] = [];
-    for (const m of res.json.models) {
+    for (const m of payload.models) {
       const methods = m.supportedGenerationMethods || [];
       if (!methods.includes("generateContent")) continue;
       const cleanId = (m.name || "").replace(/^models\//, "");
@@ -698,26 +789,29 @@ async function scanAnthropic(
       },
       throw: false,
     });
-    if (res.status !== 200 || !Array.isArray(res.json?.data)) {
+    const payload = safeJson<{ data?: AnthropicModelRecord[] }>(res);
+    if (res.status !== 200 || !Array.isArray(payload?.data)) {
       return null;
     }
 
-    const rawCandidates: AvailableModelItem[] = res.json.data.map((m: any) => {
-      const name = m.display_name || m.id;
-      const desc = `Anthropic Claude (${
-        m.created_at ? new Date(m.created_at).toLocaleDateString() : "Active"
-      })`;
-      const reasoningCap = detectReasoningCapability(m.id, { name }, root);
-      return {
-        id: m.id,
-        name,
-        description: desc,
-        category: categorizeModel(m.id, name, desc),
-        supportsReasoning: reasoningCap.supported,
-        supportedReasoningEfforts: reasoningCap.efforts,
-        isLive: false,
-      };
-    });
+    const rawCandidates: AvailableModelItem[] = payload.data.map(
+      (m: AnthropicModelRecord) => {
+        const name = m.display_name || m.id;
+        const desc = `Anthropic Claude (${
+          m.created_at ? new Date(m.created_at).toLocaleDateString() : "Active"
+        })`;
+        const reasoningCap = detectReasoningCapability(m.id, { name }, root);
+        return {
+          id: m.id,
+          name,
+          description: desc,
+          category: categorizeModel(m.id, name, desc),
+          supportsReasoning: reasoningCap.supported,
+          supportedReasoningEfforts: reasoningCap.efforts,
+          isLive: false,
+        };
+      }
+    );
     const candidates = prioritizeMultiModelCandidates(rawCandidates, preferredModel, 32);
 
     onProgress?.({
@@ -790,11 +884,12 @@ async function scanOpenRouter(
       headers: { Authorization: `Bearer ${key}` },
       throw: false,
     });
-    if (authRes.status !== 200 || !authRes.json?.data) {
+    const authPayload = safeJson<OpenRouterKeyPayload>(authRes);
+    if (authRes.status !== 200 || !authPayload?.data) {
       return null;
     }
 
-    const keyData = authRes.json.data;
+    const keyData = authPayload.data;
     let hasCredits = !keyData.is_free_tier;
 
     // Also query /credits to get exact credit balance
@@ -804,9 +899,10 @@ async function scanOpenRouter(
       headers: { Authorization: `Bearer ${key}` },
       throw: false,
     });
-    if (creditsRes.status === 200 && creditsRes.json?.data) {
-      const total = Number(creditsRes.json.data.total_credits || 0);
-      const used = Number(creditsRes.json.data.total_usage || 0);
+    const creditsPayload = safeJson<OpenRouterCreditsPayload>(creditsRes);
+    if (creditsRes.status === 200 && creditsPayload?.data) {
+      const total = Number(creditsPayload.data.total_credits || 0);
+      const used = Number(creditsPayload.data.total_usage || 0);
       if (total - used > 0.001) {
         hasCredits = true;
       } else if (total === 0) {
@@ -826,20 +922,23 @@ async function scanOpenRouter(
       method: "GET",
       throw: false,
     });
-    if (modelsRes.status !== 200 || !Array.isArray(modelsRes.json?.data)) {
+    const modelsPayload = safeJson<{ data?: OpenAICatalogModelRecord[] }>(modelsRes);
+    if (modelsRes.status !== 200 || !Array.isArray(modelsPayload?.data)) {
       return null;
     }
 
-    const rawModels: any[] = modelsRes.json.data;
-    const eligible = rawModels.filter((m) => {
-      if (!m.id || !isLikelyChatModel(m.id)) return false;
-      if (!hasCredits) {
-        const promptCost = Number(m.pricing?.prompt ?? 1);
-        const compCost = Number(m.pricing?.completion ?? 1);
-        return m.id.endsWith(":free") || (promptCost === 0 && compCost === 0);
+    const rawModels: OpenAICatalogModelRecord[] = modelsPayload.data;
+    const eligible = rawModels.filter(
+      (m): m is OpenAICatalogModelRecord & { id: string } => {
+        if (!m.id || !isLikelyChatModel(m.id)) return false;
+        if (!hasCredits) {
+          const promptCost = Number(m.pricing?.prompt ?? 1);
+          const compCost = Number(m.pricing?.completion ?? 1);
+          return m.id.endsWith(":free") || (promptCost === 0 && compCost === 0);
+        }
+        return true;
       }
-      return true;
-    });
+    );
 
     // Prioritize top/canonical models for fast verification (cap at 18 so we never blast 300+ requests)
     const priorityOrder = [
@@ -999,16 +1098,20 @@ async function scanOpenAICompatibleEndpoint(
     }
     if (res.status === 200) {
       endpointAlive = true;
-      const data = res.json?.data || res.json?.models;
+      const payload = safeJson<{
+        data?: OpenAICatalogModelRecord[];
+        models?: OpenAICatalogModelRecord[];
+      }>(res);
+      const data = payload?.data || payload?.models;
       if (Array.isArray(data) && data.length > 0) {
         candidates = data
-          .filter((m: any) => {
+          .filter((m: OpenAICatalogModelRecord) => {
             const id = m.id || m.name || "";
-            return id && isLikelyChatModel(id);
+            return Boolean(id && isLikelyChatModel(id));
           })
-          .map((m: any) => {
-            const id = m.id || m.name;
-            const name = m.name || m.id;
+          .map((m: OpenAICatalogModelRecord) => {
+            const id = m.id || m.name || "";
+            const name = m.name || m.id || id;
             const desc =
               m.description ||
               (m.context_length
@@ -1049,12 +1152,16 @@ async function scanOpenAICompatibleEndpoint(
         method: "GET",
         throw: false,
       });
-      if (tagsRes.status === 200 && Array.isArray(tagsRes.json?.models)) {
+      const tagsPayload = safeJson<{ models?: OllamaTagModelRecord[] }>(tagsRes);
+      if (tagsRes.status === 200 && Array.isArray(tagsPayload?.models)) {
         endpointAlive = true;
-        candidates = tagsRes.json.models
-          .filter((m: any) => (m.name || m.model) && isLikelyChatModel(m.name || m.model))
-          .map((m: any) => {
-            const id = m.name || m.model;
+        candidates = tagsPayload.models
+          .filter((m: OllamaTagModelRecord) => {
+            const id = m.name || m.model || "";
+            return Boolean(id && isLikelyChatModel(id));
+          })
+          .map((m: OllamaTagModelRecord) => {
+            const id = m.name || m.model || "";
             const paramSize = m.details?.parameter_size ? `${m.details.parameter_size} ` : "";
             const family = m.details?.family ? `(${m.details.family})` : "";
             const desc = `${paramSize}${family}`.trim() || "Local Ollama model";

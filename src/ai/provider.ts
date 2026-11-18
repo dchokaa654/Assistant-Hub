@@ -1,4 +1,4 @@
-import { requestUrl, RequestUrlParam } from "obsidian";
+import { requestUrl } from "obsidian";
 import {
   AISidepanelSettings,
   ChatMessage,
@@ -34,32 +34,43 @@ function describeToolCall(
   name: string,
   rawArgs: string
 ): { label: string; argsPreview?: string } {
-  let parsed: Record<string, any> | null = null;
+  let parsed: Record<string, unknown> | null = null;
   try {
     if (rawArgs && rawArgs.trim()) {
-      const obj = JSON.parse(rawArgs);
-      if (obj && typeof obj === "object") parsed = obj;
+      const obj: unknown = JSON.parse(rawArgs);
+      if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+        parsed = obj as Record<string, unknown>;
+      }
     }
   } catch {
     parsed = null;
   }
 
+  const getStr = (key: string): string => {
+    const val = parsed?.[key];
+    return typeof val === "string" ? val : "";
+  };
+
   const target =
-    parsed?.path ||
-    parsed?.notePath ||
-    parsed?.filePath ||
-    parsed?.folderPath ||
-    parsed?.sourcePath ||
-    parsed?.targetPath ||
-    parsed?.query ||
-    parsed?.folder ||
+    getStr("path") ||
+    getStr("notePath") ||
+    getStr("filePath") ||
+    getStr("folderPath") ||
+    getStr("sourcePath") ||
+    getStr("targetPath") ||
+    getStr("query") ||
+    getStr("folder") ||
     "";
   const shortTarget =
-    typeof target === "string" && target.length > 48
-      ? `…${target.slice(-45)}`
-      : String(target || "");
+    target.length > 48 ? `…${target.slice(-45)}` : target;
 
   const pathsCount = Array.isArray(parsed?.paths) ? parsed.paths.length : 0;
+  const oldPath = getStr("oldPath");
+  const newPath = getStr("newPath");
+  const fromNote = getStr("from");
+  const toNote = getStr("to");
+  const sourceNote = getStr("source");
+  const targetNote = getStr("target");
 
   const labelMap: Record<string, string> = {
     search_vault: shortTarget ? `Search vault: "${shortTarget}"` : "Search vault",
@@ -72,14 +83,14 @@ function describeToolCall(
     patch_note: shortTarget ? `Patch "${shortTarget}"` : "Patch note",
     replace_note_content: shortTarget ? `Update "${shortTarget}"` : "Update note",
     rename_or_move_note:
-      parsed?.newPath && parsed?.oldPath
-        ? `Move "${parsed.oldPath}" → "${parsed.newPath}"`
+      newPath && oldPath
+        ? `Move "${oldPath}" → "${newPath}"`
         : "Move / rename note",
     delete_note: shortTarget ? `Delete "${shortTarget}"` : "Delete note",
     create_folder: shortTarget ? `Create folder "${shortTarget}"` : "Create folder",
     rename_or_move_folder:
-      parsed?.newPath && parsed?.oldPath
-        ? `Move folder "${parsed.oldPath}" → "${parsed.newPath}"`
+      newPath && oldPath
+        ? `Move folder "${oldPath}" → "${newPath}"`
         : "Move / rename folder",
     delete_folder: shortTarget ? `Delete folder "${shortTarget}"` : "Delete folder",
     get_active_note: "Read active note",
@@ -91,12 +102,12 @@ function describeToolCall(
     get_graph_neighborhood: shortTarget ? `Inspect graph links: "${shortTarget}"` : "Inspect graph links",
     get_graph_analytics: "Analyze vault graph",
     find_graph_path:
-      parsed?.from && parsed?.to
-        ? `Find graph path: "${parsed.from}" → "${parsed.to}"`
+      fromNote && toNote
+        ? `Find graph path: "${fromNote}" → "${toNote}"`
         : "Find graph path",
     connect_notes_in_graph:
-      parsed?.source && parsed?.target
-        ? `Link "${parsed.source}" → "${parsed.target}"`
+      sourceNote && targetNote
+        ? `Link "${sourceNote}" → "${targetNote}"`
         : "Connect notes in graph",
   };
 
@@ -266,13 +277,13 @@ function cleanProseDashes(markdown: string): string {
       // Punctuation already before dash: "Wait. — Then" -> "Wait. Then"
       .replace(/([.!?,:;])\s*[—–]\s*/g, "$1 ")
       // Spaced or unspaced em-dash between words/clauses: "word — word" or "word—word" -> "word, word"
-      .replace(/([A-Za-z0-9)"'\]])\s*—\s*([A-Za-z0-9("'\[])/g, "$1, $2")
+      .replace(/([A-Za-z0-9)"'\]])\s*—\s*([A-Za-z0-9("'[ ])/g, "$1, $2")
       // Catch any remaining spaced em-dash
       .replace(/\s+—\s+/g, ", ")
       // Spaced en-dash in prose (avoid numeric ranges like 10–20): "word – word" -> "word, word"
-      .replace(/([A-Za-z)"'\]])\s+–\s+([A-Za-z("'\[])/g, "$1, $2")
+      .replace(/([A-Za-z)"'\]])\s+–\s+([A-Za-z("'[ ])/g, "$1, $2")
       // Spaced hyphen used as a clause separator: "word - word" -> "word, word"
-      .replace(/([A-Za-z)"'\]])\s+-\s+([A-Za-z("'\[])/g, "$1, $2");
+      .replace(/([A-Za-z)"'\]])\s+-\s+([A-Za-z("'[ ])/g, "$1, $2");
 
     // Clean accidental double spaces or ", ," artifacts
     out = out.replace(/,\s*,+/g, ",");
@@ -533,317 +544,312 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
       };
     };
 
-    try {
-      while (checkpoint < maxCheckpoints) {
-        checkpoint++;
-        let iteration = 0;
-        let checkpointProgressSteps = 0;
-        let checkpointLoopBlocked = false;
+    while (checkpoint < maxCheckpoints) {
+      checkpoint++;
+      let iteration = 0;
+      let checkpointProgressSteps = 0;
+      let checkpointLoopBlocked = false;
 
-        while (iteration < maxIterationsPerCheckpoint) {
-          iteration++;
+      while (iteration < maxIterationsPerCheckpoint) {
+        iteration++;
 
-          if (callbacks.signal?.aborted) {
-            throw new Error("Generation was cancelled.");
+        if (callbacks.signal?.aborted) {
+          throw new Error("Generation was cancelled.");
+        }
+
+        const compactedMessages = compactToolHistoryMessages(currentMessages);
+        const response = await this.callProviderWithRetry(
+          compactedMessages,
+          makeReasoningCallbacks(false),
+          false
+        );
+
+        // Check if tool calls were requested
+        if (
+          this.settings.enableVaultTools &&
+          response.tool_calls &&
+          response.tool_calls.length > 0
+        ) {
+          currentMessages.push(response);
+
+          const batchSignature = response.tool_calls
+            .map((tc) => `${tc.function.name}:${tc.function.arguments}`)
+            .join("|");
+
+          if (batchSignature === lastToolSignature) {
+            consecutiveDuplicateCount++;
+          } else {
+            lastToolSignature = batchSignature;
+            consecutiveDuplicateCount = 1;
           }
 
-          const compactedMessages = compactToolHistoryMessages(currentMessages);
-          const response = await this.callProviderWithRetry(
-            compactedMessages,
-            makeReasoningCallbacks(false),
-            false
-          );
-
-          // Check if tool calls were requested
-          if (
-            this.settings.enableVaultTools &&
-            response.tool_calls &&
-            response.tool_calls.length > 0
-          ) {
-            currentMessages.push(response);
-
-            const batchSignature = response.tool_calls
-              .map((tc) => `${tc.function.name}:${tc.function.arguments}`)
-              .join("|");
-
-            if (batchSignature === lastToolSignature) {
-              consecutiveDuplicateCount++;
-            } else {
-              lastToolSignature = batchSignature;
-              consecutiveDuplicateCount = 1;
-            }
-
-            if (consecutiveDuplicateCount >= 3) {
-              checkpointLoopBlocked = true;
-              for (const toolCall of response.tool_calls) {
-                const desc = describeToolCall(
-                  toolCall.function.name,
-                  toolCall.function.arguments
-                );
-                const skipActivity: ToolActivityRecord = {
-                  id: `${toolCall.id || toolCall.function.name}_loop_${turnActivities.length}`,
-                  name: toolCall.function.name,
-                  label: `Skipped repeat: ${desc.label}`,
-                  argsPreview: desc.argsPreview,
-                  resultPreview:
-                    "Loop detected; asked assistant to move to the next step.",
-                  status: "error",
-                  startedAt: Date.now(),
-                  durationMs: 0,
-                };
-                turnActivities.push(skipActivity);
-                callbacks.onToolActivity?.({ ...skipActivity });
-
-                currentMessages.push({
-                  role: "tool",
-                  tool_call_id: toolCall.id,
-                  name: toolCall.function.name,
-                  content: `Loop detected: "${toolCall.function.name}" was already called repeatedly with identical arguments. Do NOT repeat it again. Proceed to the next step, try a different approach, or provide your final answer.`,
-                });
-              }
-              callbacks.onReset?.();
-              callbacks.onStatus?.("Breaking tool loop...");
-              continue;
-            }
-
-            checkpointLoopBlocked = false;
-
+          if (consecutiveDuplicateCount >= 3) {
+            checkpointLoopBlocked = true;
             for (const toolCall of response.tool_calls) {
-              if (callbacks.signal?.aborted) {
-                throw new Error("Generation was cancelled.");
-              }
-
               const desc = describeToolCall(
                 toolCall.function.name,
                 toolCall.function.arguments
               );
-              const activity: ToolActivityRecord = {
-                id: `${toolCall.id || toolCall.function.name}_${turnActivities.length}`,
+              const skipActivity: ToolActivityRecord = {
+                id: `${toolCall.id || toolCall.function.name}_loop_${turnActivities.length}`,
                 name: toolCall.function.name,
-                label: desc.label,
+                label: `Skipped repeat: ${desc.label}`,
                 argsPreview: desc.argsPreview,
-                status: "running",
+                resultPreview:
+                  "Loop detected; asked assistant to move to the next step.",
+                status: "error",
                 startedAt: Date.now(),
+                durationMs: 0,
               };
-              turnActivities.push(activity);
-              callbacks.onToolActivity?.({ ...activity });
-
-              const cpPrefix =
-                checkpoint > 1 ? `[Batch ${checkpoint}] ` : "";
-              callbacks.onStatus?.(
-                `${cpPrefix}${desc.label} (${iteration}/${maxIterationsPerCheckpoint})...`
-              );
-
-              let result = "";
-              try {
-                result = await this.toolExecutor.executeTool(
-                  toolCall.function.name,
-                  toolCall.function.arguments,
-                  callbacks.onStatus
-                );
-                const formatted = formatToolResultPreview(result);
-                activity.status = formatted.isError ? "error" : "completed";
-                activity.resultPreview = formatted.preview;
-              } catch (toolErr: any) {
-                activity.status = "error";
-                activity.resultPreview = truncatePreview(
-                  toolErr?.message || String(toolErr)
-                );
-                activity.durationMs = Date.now() - activity.startedAt;
-                callbacks.onToolActivity?.({ ...activity });
-                throw toolErr;
-              }
-
-              checkpointProgressSteps++;
-              totalStepsExecuted++;
-              activity.durationMs = Date.now() - activity.startedAt;
-              callbacks.onToolActivity?.({ ...activity });
+              turnActivities.push(skipActivity);
+              callbacks.onToolActivity?.({ ...skipActivity });
 
               currentMessages.push({
                 role: "tool",
                 tool_call_id: toolCall.id,
                 name: toolCall.function.name,
-                content: result,
+                content: `Loop detected: "${toolCall.function.name}" was already called repeatedly with identical arguments. Do NOT repeat it again. Proceed to the next step, try a different approach, or provide your final answer.`,
               });
             }
-
-            // Gently remind model near end of batch so it batches/finishes cleanly
-            if (iteration === maxIterationsPerCheckpoint - 2) {
-              currentMessages.push({
-                role: "user",
-                content:
-                  "SYSTEM NOTE: Only 2 tool steps remain in this checkpoint batch. Wrap up current edits cleanly or batch remaining reads.",
-              });
-            }
-
             callbacks.onReset?.();
-            callbacks.onStatus?.("Synthesizing response...");
+            callbacks.onStatus?.("Breaking tool loop...");
             continue;
           }
 
-          // Check if the model claimed to have fixed or modified a note without calling tools
-          if (
-            checkpoint === 1 &&
-            iteration === 1 &&
-            this.settings.enableVaultTools &&
-            (!response.tool_calls || response.tool_calls.length === 0) &&
-            this.toolExecutor.getTurnChanges().length === 0
-          ) {
-            const lastUserMsg = conversation
-              .filter((m) => m.role === "user")
-              .pop();
-            const userPromptText = lastUserMsg?.content || "";
-            if (
-              isMutationIntent(userPromptText) &&
-              claimsUnexecutedAction(response.content)
-            ) {
-              callbacks.onReset?.();
-              callbacks.onStatus?.(
-                "Applying changes directly to note in Obsidian..."
-              );
-              currentMessages.push(response);
-              currentMessages.push({
-                role: "user",
-                content:
-                  "SYSTEM ACTION REQUIRED: You described fixing, updating, or modifying the note, but you did NOT call any vault tool (such as patch_note, replace_note_content, or edit_active_editor). The note in Obsidian has NOT been updated! You must call the appropriate tool right now to actually execute and apply these changes to the note in Obsidian.",
-              });
-              continue;
+          checkpointLoopBlocked = false;
+
+          for (const toolCall of response.tool_calls) {
+            if (callbacks.signal?.aborted) {
+              throw new Error("Generation was cancelled.");
             }
-          }
 
-          // No tool calls; task completed!
-          const changes = this.toolExecutor.getAndClearTurnChanges();
-          if (changes.length > 0) {
-            response.noteChanges = changes;
-          }
-          return attachTurnTrace(response);
-        }
-
-        // Checkpoint reached! Auto-continue with compact progress handoff if allowed & making progress
-        if (
-          checkpoint < maxCheckpoints &&
-          checkpointProgressSteps > 0 &&
-          !checkpointLoopBlocked
-        ) {
-          callbacks.onReset?.();
-          callbacks.onStatus?.(
-            `Checkpoint ${checkpoint} reached (${totalStepsExecuted} steps) — compacting context & continuing...`
-          );
-
-          const handoffMessages = [
-            ...compactToolHistoryMessages(currentMessages, 4),
-            {
-              role: "user" as const,
-              content:
-                "CHECKPOINT HANDOFF: Create a concise, factual state handoff (do NOT call tools now). List: 1) Notes/folders already inspected or modified, 2) Exact changes already applied, 3) Exact remaining items/steps still needed to finish the user's request.",
-            },
-          ];
-
-          let handoffSummary = "";
-          try {
-            const handoffMsg = await this.callProviderWithRetry(
-              handoffMessages,
-              makeReasoningCallbacks(true),
-              true
+            const desc = describeToolCall(
+              toolCall.function.name,
+              toolCall.function.arguments
             );
-            handoffSummary = (handoffMsg.content || "").trim();
-          } catch (handoffErr) {
-            if (isCancellationError(handoffErr, callbacks.signal)) {
-              throw handoffErr;
+            const activity: ToolActivityRecord = {
+              id: `${toolCall.id || toolCall.function.name}_${turnActivities.length}`,
+              name: toolCall.function.name,
+              label: desc.label,
+              argsPreview: desc.argsPreview,
+              status: "running",
+              startedAt: Date.now(),
+            };
+            turnActivities.push(activity);
+            callbacks.onToolActivity?.({ ...activity });
+
+            const cpPrefix =
+              checkpoint > 1 ? `[Batch ${checkpoint}] ` : "";
+            callbacks.onStatus?.(
+              `${cpPrefix}${desc.label} (${iteration}/${maxIterationsPerCheckpoint})...`
+            );
+
+            let result = "";
+            try {
+              result = await this.toolExecutor.executeTool(
+                toolCall.function.name,
+                toolCall.function.arguments,
+                callbacks.onStatus
+              );
+              const formatted = formatToolResultPreview(result);
+              activity.status = formatted.isError ? "error" : "completed";
+              activity.resultPreview = formatted.preview;
+            } catch (toolErr: unknown) {
+              activity.status = "error";
+              const errMsg =
+                toolErr instanceof Error ? toolErr.message : String(toolErr);
+              activity.resultPreview = truncatePreview(errMsg);
+              activity.durationMs = Date.now() - activity.startedAt;
+              callbacks.onToolActivity?.({ ...activity });
+              throw toolErr;
             }
+
+            checkpointProgressSteps++;
+            totalStepsExecuted++;
+            activity.durationMs = Date.now() - activity.startedAt;
+            callbacks.onToolActivity?.({ ...activity });
+
+            currentMessages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              name: toolCall.function.name,
+              content: result,
+            });
           }
 
-          const modifiedPaths = Array.from(
-            new Set(
-              this.toolExecutor
-                .getTurnChanges()
-                .map((c) => `${c.type}: ${c.path}`)
-            )
-          );
-          const handoffBlock =
-            handoffSummary ||
-            `Completed ${totalStepsExecuted} tool steps so far.${
-              modifiedPaths.length > 0
-                ? ` Vault changes applied: ${modifiedPaths.join(", ")}.`
-                : ""
-            }`;
-
-          const cpActivity: ToolActivityRecord = {
-            id: `checkpoint_${checkpoint}_${Date.now()}`,
-            name: "checkpoint_handoff",
-            label: `Checkpoint ${checkpoint} complete — auto-continuing`,
-            resultPreview: truncatePreview(handoffBlock),
-            status: "completed",
-            startedAt: Date.now(),
-            durationMs: 0,
-          };
-          turnActivities.push(cpActivity);
-          callbacks.onToolActivity?.({ ...cpActivity });
-
-          // Compact history to original conversation + structured progress handoff
-          currentMessages = [
-            ...conversation,
-            {
-              role: "assistant",
-              content: `[Checkpoint ${checkpoint} Progress Summary]\n${handoffBlock}`,
-            },
-            {
+          // Gently remind model near end of batch so it batches/finishes cleanly
+          if (iteration === maxIterationsPerCheckpoint - 2) {
+            currentMessages.push({
               role: "user",
               content:
-                "Continue seamlessly from this checkpoint using vault tools until the entire task is complete. Do NOT re-do completed work.",
-            },
-          ];
-          lastToolSignature = "";
-          consecutiveDuplicateCount = 0;
-          callbacks.onStatus?.(
-            `Auto-continuing task (checkpoint ${checkpoint + 1}/${maxCheckpoints})...`
-          );
+                "SYSTEM NOTE: Only 2 tool steps remain in this checkpoint batch. Wrap up current edits cleanly or batch remaining reads.",
+            });
+          }
+
+          callbacks.onReset?.();
+          callbacks.onStatus?.("Synthesizing response...");
           continue;
         }
 
-        // Break to final user-facing synthesis (maxCheckpoints reached, auto-continue off, or stalled)
-        break;
+        // Check if the model claimed to have fixed or modified a note without calling tools
+        if (
+          checkpoint === 1 &&
+          iteration === 1 &&
+          this.settings.enableVaultTools &&
+          (!response.tool_calls || response.tool_calls.length === 0) &&
+          this.toolExecutor.getTurnChanges().length === 0
+        ) {
+          const lastUserMsg = conversation
+            .filter((m) => m.role === "user")
+            .pop();
+          const userPromptText = lastUserMsg?.content || "";
+          if (
+            isMutationIntent(userPromptText) &&
+            claimsUnexecutedAction(response.content)
+          ) {
+            callbacks.onReset?.();
+            callbacks.onStatus?.(
+              "Applying changes directly to note in Obsidian..."
+            );
+            currentMessages.push(response);
+            currentMessages.push({
+              role: "user",
+              content:
+                "SYSTEM ACTION REQUIRED: You described fixing, updating, or modifying the note, but you did NOT call any vault tool (such as patch_note, replace_note_content, or edit_active_editor). The note in Obsidian has NOT been updated! You must call the appropriate tool right now to actually execute and apply these changes to the note in Obsidian.",
+            });
+            continue;
+          }
+        }
+
+        // No tool calls; task completed!
+        const changes = this.toolExecutor.getAndClearTurnChanges();
+        if (changes.length > 0) {
+          response.noteChanges = changes;
+        }
+        return attachTurnTrace(response);
       }
 
-      // Graceful final synthesis when step/checkpoint limit is reached so progress isn't lost
-      callbacks.onReset?.();
-      callbacks.onStatus?.("Summarizing progress (checkpoint limit reached)...");
-      const summaryMessages = [
-        ...compactToolHistoryMessages(currentMessages, 6),
-        {
-          role: "user" as const,
-          content:
-            "You have reached the autonomous step limit for this run. Do NOT attempt any more tool calls. Clearly summarize what you have completed, any changes made, and what remains if the task is not yet finished.",
-        },
-      ];
-
-      try {
-        const finalSummary = await this.callProviderWithRetry(
-          summaryMessages,
-          makeReasoningCallbacks(false),
-          true
+      // Checkpoint reached! Auto-continue with compact progress handoff if allowed & making progress
+      if (
+        checkpoint < maxCheckpoints &&
+        checkpointProgressSteps > 0 &&
+        !checkpointLoopBlocked
+      ) {
+        callbacks.onReset?.();
+        callbacks.onStatus?.(
+          `Checkpoint ${checkpoint} reached (${totalStepsExecuted} steps) — compacting context & continuing...`
         );
-        const turnChanges = this.toolExecutor.getAndClearTurnChanges();
-        if (turnChanges.length > 0) {
-          finalSummary.noteChanges = turnChanges;
+
+        const handoffMessages = [
+          ...compactToolHistoryMessages(currentMessages, 4),
+          {
+            role: "user" as const,
+            content:
+              "CHECKPOINT HANDOFF: Create a concise, factual state handoff (do NOT call tools now). List: 1) Notes/folders already inspected or modified, 2) Exact changes already applied, 3) Exact remaining items/steps still needed to finish the user's request.",
+          },
+        ];
+
+        let handoffSummary = "";
+        try {
+          const handoffMsg = await this.callProviderWithRetry(
+            handoffMessages,
+            makeReasoningCallbacks(true),
+            true
+          );
+          handoffSummary = (handoffMsg.content || "").trim();
+        } catch (handoffErr) {
+          if (isCancellationError(handoffErr, callbacks.signal)) {
+            throw handoffErr;
+          }
         }
-        finalSummary.hitToolLimit = true;
-        return attachTurnTrace(finalSummary);
-      } catch (synthErr) {
-        if (isCancellationError(synthErr, callbacks.signal)) {
-          throw synthErr;
-        }
-        const fallbackChanges = this.toolExecutor.getAndClearTurnChanges();
-        return attachTurnTrace({
-          role: "assistant",
-          content: `Paused after ${totalStepsExecuted} tool steps across ${checkpoint} checkpoint(s). Click **Continue Task** below to resume right where I left off.`,
-          noteChanges: fallbackChanges.length > 0 ? fallbackChanges : undefined,
-          hitToolLimit: true,
-        });
+
+        const modifiedPaths = Array.from(
+          new Set(
+            this.toolExecutor
+              .getTurnChanges()
+              .map((c) => `${c.type}: ${c.path}`)
+          )
+        );
+        const handoffBlock =
+          handoffSummary ||
+          `Completed ${totalStepsExecuted} tool steps so far.${
+            modifiedPaths.length > 0
+              ? ` Vault changes applied: ${modifiedPaths.join(", ")}.`
+              : ""
+          }`;
+
+        const cpActivity: ToolActivityRecord = {
+          id: `checkpoint_${checkpoint}_${Date.now()}`,
+          name: "checkpoint_handoff",
+          label: `Checkpoint ${checkpoint} complete — auto-continuing`,
+          resultPreview: truncatePreview(handoffBlock),
+          status: "completed",
+          startedAt: Date.now(),
+          durationMs: 0,
+        };
+        turnActivities.push(cpActivity);
+        callbacks.onToolActivity?.({ ...cpActivity });
+
+        // Compact history to original conversation + structured progress handoff
+        currentMessages = [
+          ...conversation,
+          {
+            role: "assistant",
+            content: `[Checkpoint ${checkpoint} Progress Summary]\n${handoffBlock}`,
+          },
+          {
+            role: "user",
+            content:
+              "Continue seamlessly from this checkpoint using vault tools until the entire task is complete. Do NOT re-do completed work.",
+          },
+        ];
+        lastToolSignature = "";
+        consecutiveDuplicateCount = 0;
+        callbacks.onStatus?.(
+          `Auto-continuing task (checkpoint ${checkpoint + 1}/${maxCheckpoints})...`
+        );
+        continue;
       }
-    } catch (err) {
-      // Preserve any changes recorded before the error so they can be reverted if needed
-      throw err;
+
+      // Break to final user-facing synthesis (maxCheckpoints reached, auto-continue off, or stalled)
+      break;
+    }
+
+    // Graceful final synthesis when step/checkpoint limit is reached so progress isn't lost
+    callbacks.onReset?.();
+    callbacks.onStatus?.("Summarizing progress (checkpoint limit reached)...");
+    const summaryMessages = [
+      ...compactToolHistoryMessages(currentMessages, 6),
+      {
+        role: "user" as const,
+        content:
+          "You have reached the autonomous step limit for this run. Do NOT attempt any more tool calls. Clearly summarize what you have completed, any changes made, and what remains if the task is not yet finished.",
+      },
+    ];
+
+    try {
+      const finalSummary = await this.callProviderWithRetry(
+        summaryMessages,
+        makeReasoningCallbacks(false),
+        true
+      );
+      const turnChanges = this.toolExecutor.getAndClearTurnChanges();
+      if (turnChanges.length > 0) {
+        finalSummary.noteChanges = turnChanges;
+      }
+      finalSummary.hitToolLimit = true;
+      return attachTurnTrace(finalSummary);
+    } catch (synthErr) {
+      if (isCancellationError(synthErr, callbacks.signal)) {
+        throw synthErr;
+      }
+      const fallbackChanges = this.toolExecutor.getAndClearTurnChanges();
+      return attachTurnTrace({
+        role: "assistant",
+        content: `Paused after ${totalStepsExecuted} tool steps across ${checkpoint} checkpoint(s). Click **Continue Task** below to resume right where I left off.`,
+        noteChanges: fallbackChanges.length > 0 ? fallbackChanges : undefined,
+        hitToolLimit: true,
+      });
     }
   }
 
@@ -856,7 +862,7 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         return await this.callProvider(messages, callbacks, disableTools);
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (
           attempt >= maxRetries ||
           !isRetryableApiError(err, callbacks.signal)
@@ -905,7 +911,7 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
   }
 
   /**
-   * Executes a streaming POST request and yields each parsed SSE `data:` payload.
+   * Executes an SSE POST request via Obsidian's `requestUrl` and yields each parsed `data:` payload.
    */
   private async streamSSE(
     endpoint: string,
@@ -915,30 +921,35 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
     providerLabel: string,
     onData: (dataStr: string) => boolean | void
   ): Promise<void> {
-    const res = await fetch(endpoint, {
+    if (signal?.aborted) {
+      throw new Error("Generation was cancelled.");
+    }
+
+    const res = await requestUrl({
+      url: endpoint,
       method: "POST",
       headers,
       body: JSON.stringify(body),
-      signal,
+      throw: false,
     });
 
-    if (!res.ok) {
-      const errText = await res.text();
-      const retryAfterMs = parseRetryAfterMs(res.headers.get("retry-after"));
+    if (signal?.aborted) {
+      throw new Error("Generation was cancelled.");
+    }
+
+    if (res.status >= 400) {
+      const retryAfterMs = parseRetryAfterMs(res.headers?.["retry-after"]);
       throw new ApiHttpError(
-        `${providerLabel} Error ${res.status}: ${errText}`,
+        `${providerLabel} Error ${res.status}: ${res.text}`,
         res.status,
         retryAfterMs
       );
     }
 
-    if (!res.body) {
+    const rawText = res.text || "";
+    if (!rawText.trim()) {
       throw new Error("No response body received from server.");
     }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
 
     const processLine = (rawLine: string): boolean => {
       const trimmed = rawLine.trim();
@@ -949,28 +960,20 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
       return onData(dataStr) === true;
     };
 
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (processLine(line)) return;
-        }
+    let processedAny = false;
+    for (const line of rawText.split(/\r?\n/)) {
+      if (signal?.aborted) {
+        throw new Error("Generation was cancelled.");
       }
-
-      buffer += decoder.decode();
-      if (buffer.trim()) {
-        for (const line of buffer.split("\n")) {
-          if (processLine(line)) return;
-        }
+      if (line.trim().startsWith("data:")) {
+        processedAny = true;
       }
-    } finally {
-      reader.releaseLock();
+      if (processLine(line)) return;
+    }
+
+    if (!processedAny) {
+      // Some endpoints return a single JSON response even when stream: true is passed
+      onData(rawText.trim());
     }
   }
 
@@ -1017,7 +1020,7 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
       : undefined;
 
     // Format messages: ensure system prompt is included
-    const apiMessages: any[] = [];
+    const apiMessages: Array<Record<string, unknown>> = [];
     const effectiveSystemPrompt = this.getEffectiveSystemPrompt();
     if (effectiveSystemPrompt) {
       apiMessages.push({
@@ -1027,7 +1030,7 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
     }
 
     for (const m of messages) {
-      const msgObj: any = {
+      const msgObj: Record<string, unknown> = {
         role: m.role,
         content: m.content || "",
       };
@@ -1039,7 +1042,7 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
 
     const modelId = this.settings.model || "gpt-4o-mini";
     const baseModel = normalizeModelBaseId(modelId);
-    const payload: any = {
+    const payload: Record<string, unknown> = {
       model: modelId,
       messages: apiMessages,
       temperature: this.settings.temperature ?? 0.7,
@@ -1073,9 +1076,8 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
     }
 
     try {
-      // Try streaming with fetch first (allows live streaming on desktop)
       return await this.streamOpenAIResponse(endpoint, headers, payload, callbacks);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (isCancellationError(err, callbacks.signal)) {
         throw new Error("Generation was cancelled.");
       }
@@ -1086,7 +1088,7 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
           this.isReasoningParamError(err.message)
         ) {
           this.unsupportedReasoningModels.add(modelId);
-          const cleanPayload = { ...payload };
+          const cleanPayload: Record<string, unknown> = { ...payload };
           delete cleanPayload.reasoning_effort;
           delete cleanPayload.reasoning;
           delete cleanPayload.enable_thinking;
@@ -1100,7 +1102,6 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
         }
         throw err;
       }
-      // If streaming fetch fails (e.g. CORS on mobile or specific desktop restrictions), fallback to requestUrl
       return await this.fallbackOpenAIRequestUrl(
         endpoint,
         headers,
@@ -1113,11 +1114,35 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
   private async streamOpenAIResponse(
     endpoint: string,
     headers: Record<string, string>,
-    payload: any,
+    payload: Record<string, unknown>,
     callbacks: StreamCallbacks
   ): Promise<ChatMessage> {
     let accumulatedText = "";
     const toolCallsMap: { [index: number]: ToolCall } = {};
+
+    interface OpenAIStreamPayload {
+      choices?: Array<{
+        delta?: {
+          content?: string;
+          reasoning_content?: string;
+          reasoning?: string;
+          tool_calls?: Array<{
+            index?: number;
+            id?: string;
+            function?: {
+              name?: string;
+              arguments?: string;
+            };
+          }>;
+        };
+        message?: {
+          content?: string;
+          reasoning_content?: string;
+          reasoning?: string;
+          tool_calls?: ToolCall[];
+        };
+      }>;
+    }
 
     await this.streamSSE(
       endpoint,
@@ -1126,9 +1151,9 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
       callbacks.signal,
       "API",
       (dataStr) => {
-        let json: any;
+        let json: OpenAIStreamPayload;
         try {
-          json = JSON.parse(dataStr);
+          json = JSON.parse(dataStr) as OpenAIStreamPayload;
         } catch {
           return;
         }
@@ -1138,15 +1163,26 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
 
         // Reasoning / thinking delta (DeepSeek, OpenRouter, Qwen, etc.)
         const reasoningDelta =
-          choice.delta?.reasoning_content ?? choice.delta?.reasoning;
+          choice.delta?.reasoning_content ??
+          choice.delta?.reasoning ??
+          choice.message?.reasoning_content ??
+          choice.message?.reasoning;
         if (typeof reasoningDelta === "string" && reasoningDelta.length > 0) {
           callbacks.onReasoningChunk?.(reasoningDelta);
         }
 
         // Content delta
-        if (choice.delta?.content) {
-          accumulatedText += choice.delta.content;
-          callbacks.onChunk(choice.delta.content);
+        const contentDelta = choice.delta?.content ?? choice.message?.content;
+        if (contentDelta) {
+          accumulatedText += contentDelta;
+          callbacks.onChunk(contentDelta);
+        }
+
+        // Non-streaming tool calls if endpoint returned full message object
+        if (choice.message?.tool_calls && !choice.delta?.tool_calls) {
+          choice.message.tool_calls.forEach((tc, idx) => {
+            toolCallsMap[idx] = tc;
+          });
         }
 
         // Tool call delta
@@ -1186,14 +1222,16 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
   private async fallbackOpenAIRequestUrl(
     endpoint: string,
     headers: Record<string, string>,
-    payload: any,
+    payload: Record<string, unknown>,
     callbacks: StreamCallbacks
   ): Promise<ChatMessage> {
-    const nonStreamPayload: any = { ...payload, stream: false };
-    if (
-      endpoint.includes("dashscope") ||
-      String(payload.model || "").toLowerCase().includes("qwen3")
-    ) {
+    const nonStreamPayload: Record<string, unknown> = {
+      ...payload,
+      stream: false,
+    };
+    const modelStr =
+      typeof payload.model === "string" ? payload.model.toLowerCase() : "";
+    if (endpoint.includes("dashscope") || modelStr.includes("qwen3")) {
       nonStreamPayload.enable_thinking = false;
     }
     const response = await requestUrl({
@@ -1211,21 +1249,30 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
       );
     }
 
-    const json = response.json;
-    const choice = json.choices?.[0];
-    const message = choice?.message || {};
-    const reasoningText = message.reasoning_content ?? message.reasoning;
+    const json = (response.json as unknown) as {
+      choices?: Array<{
+        message?: {
+          content?: string;
+          reasoning_content?: string;
+          reasoning?: string;
+          tool_calls?: ToolCall[];
+        };
+      }>;
+    } | null;
+    const choice = json?.choices?.[0];
+    const message = choice?.message;
+    const reasoningText = message?.reasoning_content ?? message?.reasoning;
     if (typeof reasoningText === "string" && reasoningText.length > 0) {
       callbacks.onReasoningChunk?.(reasoningText);
     }
-    const content = message.content || "";
+    const content = message?.content || "";
     if (content) {
       callbacks.onChunk(content);
     }
     return {
       role: "assistant",
       content,
-      tool_calls: message.tool_calls,
+      tool_calls: message?.tool_calls,
     };
   }
 
@@ -1261,7 +1308,7 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
       : undefined;
 
     // Convert chat messages to Anthropic format
-    const anthropicMessages: any[] = [];
+    const anthropicMessages: Array<Record<string, unknown>> = [];
     for (const m of messages) {
       if (m.role === "system") continue; // handled via system field
       if (m.role === "tool") {
@@ -1276,15 +1323,24 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
           ],
         });
       } else if (m.role === "assistant" && m.tool_calls) {
-        const contentBlocks: any[] = [];
+        const contentBlocks: Array<Record<string, unknown>> = [];
         if (m.content) {
           contentBlocks.push({ type: "text", text: m.content });
         }
         for (const tc of m.tool_calls) {
-          let input = {};
+          let input: Record<string, unknown> = {};
           try {
-            input = JSON.parse(tc.function.arguments);
-          } catch {}
+            const parsedInput: unknown = JSON.parse(tc.function.arguments);
+            if (
+              parsedInput &&
+              typeof parsedInput === "object" &&
+              !Array.isArray(parsedInput)
+            ) {
+              input = parsedInput as Record<string, unknown>;
+            }
+          } catch {
+            // Keep empty object if tool arguments were malformed JSON
+          }
           contentBlocks.push({
             type: "tool_use",
             id: tc.id,
@@ -1306,10 +1362,11 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
 
     const modelId = this.settings.model || "claude-3-5-sonnet-20241022";
     const effectiveSystemPrompt = this.getEffectiveSystemPrompt();
-    const payload: any = {
+    const maxTokensBase = this.settings.maxTokens || 4096;
+    const payload: Record<string, unknown> = {
       model: modelId,
       messages: anthropicMessages,
-      max_tokens: this.settings.maxTokens || 4096,
+      max_tokens: maxTokensBase,
       temperature: this.settings.temperature ?? 0.7,
       system: effectiveSystemPrompt || undefined,
     };
@@ -1324,7 +1381,7 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
       const effort: ReasoningEffort = this.settings.reasoningEffort || "medium";
       const budget = this.getThinkingBudgetTokens(effort, "anthropic");
       payload.thinking = { type: "enabled", budget_tokens: budget };
-      payload.max_tokens = Math.max(payload.max_tokens || 4096, budget + 4096);
+      payload.max_tokens = Math.max(maxTokensBase, budget + 4096);
       // Anthropic forbids custom temperature when extended thinking is enabled
       delete payload.temperature;
       injectedThinking = true;
@@ -1337,7 +1394,7 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
         { ...payload, stream: true },
         callbacks
       );
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (isCancellationError(err, callbacks.signal)) {
         throw new Error("Generation was cancelled.");
       }
@@ -1348,7 +1405,7 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
           this.isReasoningParamError(err.message)
         ) {
           this.unsupportedReasoningModels.add(modelId);
-          const cleanPayload = {
+          const cleanPayload: Record<string, unknown> = {
             ...payload,
             temperature: this.settings.temperature ?? 0.7,
             max_tokens: this.settings.maxTokens || 4096,
@@ -1376,11 +1433,30 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
   private async streamAnthropicResponse(
     endpoint: string,
     headers: Record<string, string>,
-    payload: any,
+    payload: Record<string, unknown>,
     callbacks: StreamCallbacks
   ): Promise<ChatMessage> {
     let accumulatedText = "";
     const toolCallsMap: { [index: number]: ToolCall } = {};
+
+    interface AnthropicStreamEvent {
+      type?: string;
+      index?: number;
+      error?: { message?: string };
+      content_block?: {
+        type?: string;
+        text?: string;
+        thinking?: string;
+        id?: string;
+        name?: string;
+      };
+      delta?: {
+        type?: string;
+        text?: string;
+        thinking?: string;
+        partial_json?: string;
+      };
+    }
 
     await this.streamSSE(
       endpoint,
@@ -1389,9 +1465,9 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
       callbacks.signal,
       "Anthropic",
       (dataStr) => {
-        let evt: any;
+        let evt: AnthropicStreamEvent;
         try {
-          evt = JSON.parse(dataStr);
+          evt = JSON.parse(dataStr) as AnthropicStreamEvent;
         } catch {
           return;
         }
@@ -1458,7 +1534,7 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
   private async fallbackAnthropicRequestUrl(
     endpoint: string,
     headers: Record<string, string>,
-    payload: any,
+    payload: Record<string, unknown>,
     callbacks: StreamCallbacks
   ): Promise<ChatMessage> {
     const res = await requestUrl({
@@ -1476,20 +1552,28 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
       );
     }
 
-    const data = res.json;
+    interface AnthropicContentBlock {
+      type?: string;
+      text?: string;
+      thinking?: string;
+      id?: string;
+      name?: string;
+      input?: Record<string, unknown>;
+    }
+    const data = (res.json as unknown) as { content?: AnthropicContentBlock[] } | null;
     let accumulatedText = "";
     const toolCalls: ToolCall[] = [];
 
-    if (Array.isArray(data.content)) {
+    if (Array.isArray(data?.content)) {
       for (const block of data.content) {
-        if (block.type === "text") {
+        if (block.type === "text" && block.text) {
           accumulatedText += block.text;
           callbacks.onChunk(block.text);
         } else if (block.type === "thinking" && block.thinking) {
           callbacks.onReasoningChunk?.(block.thinking);
-        } else if (block.type === "tool_use") {
+        } else if (block.type === "tool_use" && block.name) {
           toolCalls.push({
-            id: block.id,
+            id: block.id || `call_anthropic_${Date.now()}_${toolCalls.length}`,
             type: "function",
             function: {
               name: block.name,
@@ -1526,7 +1610,7 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
     )}`;
 
     // Gemini contents
-    const contents: any[] = [];
+    const contents: Array<Record<string, unknown>> = [];
     for (const m of messages) {
       if (m.role === "system") continue;
       if (m.role === "tool") {
@@ -1542,13 +1626,22 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
           ],
         });
       } else if (m.role === "assistant" && m.tool_calls) {
-        const parts: any[] = [];
+        const parts: Array<Record<string, unknown>> = [];
         if (m.content) parts.push({ text: m.content });
         for (const tc of m.tool_calls) {
-          let args = {};
+          let args: Record<string, unknown> = {};
           try {
-            args = JSON.parse(tc.function.arguments);
-          } catch {}
+            const parsedArgs: unknown = JSON.parse(tc.function.arguments);
+            if (
+              parsedArgs &&
+              typeof parsedArgs === "object" &&
+              !Array.isArray(parsedArgs)
+            ) {
+              args = parsedArgs as Record<string, unknown>;
+            }
+          } catch {
+            // Keep empty object if tool arguments were malformed JSON
+          }
           parts.push({
             functionCall: {
               name: tc.function.name,
@@ -1565,12 +1658,13 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
       }
     }
 
-    const payload: any = {
+    const generationConfig: Record<string, unknown> = {
+      temperature: this.settings.temperature ?? 0.7,
+      maxOutputTokens: this.settings.maxTokens || 4096,
+    };
+    const payload: Record<string, unknown> = {
       contents,
-      generationConfig: {
-        temperature: this.settings.temperature ?? 0.7,
-        maxOutputTokens: this.settings.maxTokens || 4096,
-      },
+      generationConfig,
     };
 
     const reasoningCap = getActiveModelReasoningCapability(this.settings);
@@ -1579,17 +1673,17 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
       const effort: ReasoningEffort = this.settings.reasoningEffort || "medium";
       const baseModel = normalizeModelBaseId(model);
       if (baseModel.startsWith("gemini-3")) {
-        payload.generationConfig.thinkingConfig = {
+        generationConfig.thinkingConfig = {
           thinkingLevel:
             effort === "low" ? "LOW" : effort === "medium" ? "MEDIUM" : "HIGH",
         };
       } else {
         const budget = this.getThinkingBudgetTokens(effort, "gemini");
-        payload.generationConfig.thinkingConfig = {
+        generationConfig.thinkingConfig = {
           thinkingBudget: budget,
         };
-        payload.generationConfig.maxOutputTokens = Math.max(
-          payload.generationConfig.maxOutputTokens || 4096,
+        generationConfig.maxOutputTokens = Math.max(
+          this.settings.maxTokens || 4096,
           8192
         );
       }
@@ -1621,7 +1715,7 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
 
     try {
       return await this.streamGeminiResponse(streamEndpoint, payload, callbacks);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (isCancellationError(err, callbacks.signal)) {
         throw new Error("Generation was cancelled.");
       }
@@ -1632,14 +1726,15 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
           this.isReasoningParamError(err.message)
         ) {
           this.unsupportedReasoningModels.add(model);
-          const cleanPayload = {
-            ...payload,
-            generationConfig: {
-              ...payload.generationConfig,
-              maxOutputTokens: this.settings.maxTokens || 4096,
-            },
+          const cleanGenConfig: Record<string, unknown> = {
+            ...generationConfig,
+            maxOutputTokens: this.settings.maxTokens || 4096,
           };
-          delete cleanPayload.generationConfig.thinkingConfig;
+          delete cleanGenConfig.thinkingConfig;
+          const cleanPayload: Record<string, unknown> = {
+            ...payload,
+            generationConfig: cleanGenConfig,
+          };
           return await this.streamGeminiResponse(
             streamEndpoint,
             cleanPayload,
@@ -1654,11 +1749,31 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
 
   private async streamGeminiResponse(
     endpoint: string,
-    payload: any,
+    payload: Record<string, unknown>,
     callbacks: StreamCallbacks
   ): Promise<ChatMessage> {
     let accumulatedText = "";
     const toolCalls: ToolCall[] = [];
+
+    interface GeminiPart {
+      text?: string;
+      thought?: boolean;
+      functionCall?: {
+        name: string;
+        args?: Record<string, unknown>;
+      };
+    }
+    interface GeminiResponsePayload {
+      error?: {
+        code?: number;
+        message?: string;
+      };
+      candidates?: Array<{
+        content?: {
+          parts?: GeminiPart[];
+        };
+      }>;
+    }
 
     await this.streamSSE(
       endpoint,
@@ -1667,19 +1782,20 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
       callbacks.signal,
       "Gemini",
       (dataStr) => {
-        let data: any;
+        let data: GeminiResponsePayload;
         try {
-          data = JSON.parse(dataStr);
+          data = JSON.parse(dataStr) as GeminiResponsePayload;
         } catch {
           return;
         }
 
         if (data.error) {
+          const errCode = typeof data.error.code === "number" ? data.error.code : 500;
           throw new ApiHttpError(
-            `Gemini Error ${data.error.code || 500}: ${
+            `Gemini Error ${errCode}: ${
               data.error.message || JSON.stringify(data.error)
             }`,
-            data.error.code || 500
+            errCode
           );
         }
 
@@ -1716,7 +1832,7 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
 
   private async fallbackGeminiRequestUrl(
     endpoint: string,
-    payload: any,
+    payload: Record<string, unknown>,
     callbacks: StreamCallbacks
   ): Promise<ChatMessage> {
     const res = await requestUrl({
@@ -1734,8 +1850,22 @@ When the user asks you to fix, edit, update, modify, rewrite, correct, patch, ap
       );
     }
 
-    const data = res.json;
-    const candidate = data.candidates?.[0];
+    interface GeminiPart {
+      text?: string;
+      thought?: boolean;
+      functionCall?: {
+        name: string;
+        args?: Record<string, unknown>;
+      };
+    }
+    const data = (res.json as unknown) as {
+      candidates?: Array<{
+        content?: {
+          parts?: GeminiPart[];
+        };
+      }>;
+    } | null;
+    const candidate = data?.candidates?.[0];
     let accumulatedText = "";
     const toolCalls: ToolCall[] = [];
 

@@ -678,19 +678,20 @@ export class VaultToolExecutor {
   }
 
   private async trashAbstractFile(item: TAbstractFile): Promise<void> {
-    if (typeof this.app.fileManager?.trashFile === "function") {
-      await this.app.fileManager.trashFile(item);
-    } else {
-      await this.app.vault.trash(item, true);
-    }
+    await this.app.fileManager.trashFile(item);
   }
 
   private trySaveFileRecoverySnapshot(filePath: string, content: string): void {
     try {
-      const frPlugin = (this.app as any).internalPlugins?.plugins?.[
-        "file-recovery"
-      ];
-      const instance = frPlugin?.instance;
+      const appExt = this.app as unknown as {
+        internalPlugins?: {
+          plugins?: Record<
+            string,
+            { instance?: { forceAdd?: (p: string, c: string) => void } }
+          >;
+        };
+      };
+      const instance = appExt.internalPlugins?.plugins?.["file-recovery"]?.instance;
       if (instance && typeof instance.forceAdd === "function") {
         instance.forceAdd(filePath, content);
       }
@@ -737,16 +738,24 @@ export class VaultToolExecutor {
             try {
               editor.setCursor(cursor);
               editor.scrollTo(scroll.left, scroll.top);
-            } catch {}
+            } catch {
+              // Ignore cursor restore failure if document length shrank
+            }
           }
         }
         try {
-          if (typeof (leaf.view as any).data === "string") {
-            (leaf.view as any).data = updatedContent;
+          const viewExt = leaf.view as unknown as {
+            data?: string;
+            clearDirty?: () => void;
+          };
+          if (typeof viewExt.data === "string") {
+            viewExt.data = updatedContent;
           }
           leaf.view.setViewData?.(updatedContent, false);
-          (leaf.view as any).clearDirty?.();
-        } catch {}
+          viewExt.clearDirty?.();
+        } catch {
+          // Ignore internal view data sync error
+        }
       }
     });
   }
@@ -808,7 +817,9 @@ export class VaultToolExecutor {
       if (existing instanceof TFile && isTextFileExtension(existing.extension)) {
         try {
           currentText = await this.readLiveText(existing);
-        } catch {}
+        } catch {
+          // Ignore unreadable text file during diff check
+        }
       }
 
       if (record.type === "modified") {
@@ -1077,11 +1088,10 @@ export class VaultToolExecutor {
             revertedItems.push(`Restored deleted file [[${exactPath}]]`);
           }
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error(`Failed to revert change for ${record.path}:`, err);
-        revertedItems.push(
-          `Failed to revert ${record.path}: ${err?.message || String(err)}`
-        );
+        const errMsg = err instanceof Error ? err.message : String(err);
+        revertedItems.push(`Failed to revert ${record.path}: ${errMsg}`);
       }
     }
 
@@ -1194,11 +1204,10 @@ export class VaultToolExecutor {
             reapplied.push(`Re-deleted [[${exactPath}]]`);
           }
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error(`Failed to re-apply change for ${record.path}:`, err);
-        reapplied.push(
-          `Failed to re-apply ${record.path}: ${err?.message || String(err)}`
-        );
+        const errMsg = err instanceof Error ? err.message : String(err);
+        reapplied.push(`Failed to re-apply ${record.path}: ${errMsg}`);
       }
     }
 
@@ -1210,78 +1219,101 @@ export class VaultToolExecutor {
     argsJson: string,
     onStatus?: (status: string) => void
   ): Promise<string> {
-    let args: any = {};
+    let args: Record<string, unknown> = {};
     try {
-      args = JSON.parse(argsJson || "{}");
+      const parsed: unknown = JSON.parse(argsJson || "{}");
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        args = parsed as Record<string, unknown>;
+      }
     } catch {
       return `Error: Failed to parse tool arguments as JSON: ${argsJson}`;
     }
 
+    const str = (val: unknown, fallback = ""): string =>
+      typeof val === "string"
+        ? val
+        : typeof val === "number" || typeof val === "boolean"
+        ? String(val)
+        : fallback;
+    const optStr = (val: unknown): string | undefined =>
+      typeof val === "string" ? val : undefined;
+    const intOr = (val: unknown, fallback: number): number => {
+      const n = typeof val === "number" ? val : parseInt(str(val), 10);
+      return Number.isFinite(n) && n > 0 ? n : fallback;
+    };
+    const optInt = (val: unknown): number | undefined => {
+      if (val === undefined || val === null || val === "") return undefined;
+      const n = typeof val === "number" ? val : parseInt(str(val), 10);
+      return Number.isFinite(n) ? n : undefined;
+    };
+
     try {
       switch (name) {
         case "search_vault":
-          onStatus?.(`Searching vault for "${args.query}"...`);
-          return await this.searchVault(args.query);
+          onStatus?.(`Searching vault for "${str(args.query)}"...`);
+          return await this.searchVault(str(args.query));
 
         case "list_folders_and_files":
           onStatus?.(`Inspecting vault folders & files...`);
           return await this.listFoldersAndFiles(
-            args.folder,
-            String(args.recursive).toLowerCase() !== "false",
-            parseInt(args.limit, 10) || 100
+            optStr(args.folder),
+            str(args.recursive).toLowerCase() !== "false",
+            intOr(args.limit, 100)
           );
 
         case "list_notes":
-          onStatus?.(`Listing notes in ${args.folder || "vault"}...`);
-          return await this.listNotes(args.folder, parseInt(args.limit, 10) || 50);
+          onStatus?.(`Listing notes in ${str(args.folder, "vault")}...`);
+          return await this.listNotes(optStr(args.folder), intOr(args.limit, 50));
 
         case "read_note":
-          onStatus?.(`Reading "${args.path}"...`);
-          return await this.readNote(args.path);
+          onStatus?.(`Reading "${str(args.path)}"...`);
+          return await this.readNote(str(args.path));
 
         case "read_notes":
           onStatus?.(`Reading batch of notes...`);
           return await this.readNotes(args.paths ?? args.path);
 
         case "create_note":
-          onStatus?.(`Creating note "${args.path}"...`);
-          return await this.createNote(args.path, args.content);
+          onStatus?.(`Creating note "${str(args.path)}"...`);
+          return await this.createNote(str(args.path), str(args.content));
 
         case "append_to_note":
-          onStatus?.(`Appending to "${args.path}"...`);
-          return await this.appendToNote(args.path, args.content);
+          onStatus?.(`Appending to "${str(args.path)}"...`);
+          return await this.appendToNote(str(args.path), str(args.content));
 
         case "patch_note":
-          onStatus?.(`Patching section in "${args.path}"...`);
+          onStatus?.(`Patching section in "${str(args.path)}"...`);
           return await this.patchNote(
-            args.path,
-            args.search_text,
-            args.replace_text
+            str(args.path),
+            str(args.search_text),
+            str(args.replace_text)
           );
 
         case "replace_note_content":
-          onStatus?.(`Updating note "${args.path}"...`);
-          return await this.replaceNoteContent(args.path, args.content);
+          onStatus?.(`Updating note "${str(args.path)}"...`);
+          return await this.replaceNoteContent(str(args.path), str(args.content));
 
         case "rename_or_move_note":
-          onStatus?.(`Moving/renaming "${args.path}" → "${args.new_path}"...`);
-          return await this.renameOrMoveNote(args.path, args.new_path);
+          onStatus?.(
+            `Moving/renaming "${str(args.path)}" → "${str(args.new_path)}"...`
+          );
+          return await this.renameOrMoveNote(str(args.path), str(args.new_path));
 
         case "delete_note":
-          onStatus?.(`Deleting note "${args.path}"...`);
-          return await this.deleteNote(args.path);
+          onStatus?.(`Deleting note "${str(args.path)}"...`);
+          return await this.deleteNote(str(args.path));
 
         case "create_folder":
-          onStatus?.(`Creating folder "${args.path}"...`);
-          return await this.createFolder(args.path);
+          onStatus?.(`Creating folder "${str(args.path)}"...`);
+          return await this.createFolder(str(args.path));
 
         case "rename_or_move_folder":
-          onStatus?.(`Moving/renaming folder "${args.path}"...`);
-          return await this.renameOrMoveFolder(args.path, args.new_path);
+          onStatus?.(`Moving/renaming folder "${str(args.path)}"...`);
+          return await this.renameOrMoveFolder(str(args.path), str(args.new_path));
 
         case "delete_folder":
-          onStatus?.(`Deleting folder "${args.path}"...`);
-          return await this.deleteFolder(args.path);
+          onStatus?.(`Deleting folder "${str(args.path)}"...`);
+          return await this.deleteFolder(str(args.path));
 
         case "get_active_note":
           onStatus?.(`Reading active note...`);
@@ -1292,29 +1324,32 @@ export class VaultToolExecutor {
           return await this.getWorkspaceState();
 
         case "open_note_in_workspace":
-          onStatus?.(`Opening "${args.path}" in workspace...`);
-          return await this.openNoteInWorkspace(args.path, args.open_mode);
+          onStatus?.(`Opening "${str(args.path)}" in workspace...`);
+          return await this.openNoteInWorkspace(
+            str(args.path),
+            optStr(args.open_mode)
+          );
 
         case "close_workspace_tab":
-          onStatus?.(`Closing tab for "${args.path}"...`);
-          return await this.closeWorkspaceTab(args.path);
+          onStatus?.(`Closing tab for "${str(args.path)}"...`);
+          return await this.closeWorkspaceTab(str(args.path));
 
         case "edit_active_editor":
           onStatus?.(`Editing active workspace editor...`);
           return await this.editActiveEditor(
-            args.action,
-            args.content,
-            args.start_line ? parseInt(args.start_line, 10) : undefined,
-            args.end_line ? parseInt(args.end_line, 10) : undefined
+            str(args.action),
+            str(args.content),
+            optInt(args.start_line),
+            optInt(args.end_line)
           );
 
         case "open_graph_view":
           onStatus?.(`Opening Obsidian Graph View...`);
-          return await this.openGraphView(args.mode || "global");
+          return await this.openGraphView(str(args.mode, "global"));
 
         case "get_graph_neighborhood":
-          onStatus?.(`Analyzing graph connections for "${args.note}"...`);
-          return await this.getGraphNeighborhood(args.note);
+          onStatus?.(`Analyzing graph connections for "${str(args.note)}"...`);
+          return await this.getGraphNeighborhood(str(args.note));
 
         case "get_graph_analytics":
           onStatus?.(`Analyzing vault graph topology & hubs...`);
@@ -1322,25 +1357,33 @@ export class VaultToolExecutor {
 
         case "find_graph_path":
           onStatus?.(
-            `Finding graph path from "${args.from_note}" to "${args.to_note}"...`
+            `Finding graph path from "${str(args.from_note)}" to "${str(
+              args.to_note
+            )}"...`
           );
-          return await this.findGraphPath(args.from_note, args.to_note);
+          return await this.findGraphPath(
+            str(args.from_note),
+            str(args.to_note)
+          );
 
         case "connect_notes_in_graph":
           onStatus?.(
-            `Connecting [[${args.source_note}]] -> [[${args.target_note}]] in graph...`
+            `Connecting [[${str(args.source_note)}]] -> [[${str(
+              args.target_note
+            )}]] in graph...`
           );
           return await this.connectNotesInGraph(
-            args.source_note,
-            args.target_note,
-            args.context_sentence
+            str(args.source_note),
+            str(args.target_note),
+            optStr(args.context_sentence)
           );
 
         default:
           return `Error: Unknown tool "${name}"`;
       }
-    } catch (err: any) {
-      return `Error executing ${name}: ${err?.message || String(err)}`;
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      return `Error executing ${name}: ${errMsg}`;
     }
   }
 
@@ -1580,7 +1623,9 @@ export class VaultToolExecutor {
               snippet: snippet.trim(),
             });
           }
-        } catch {}
+        } catch {
+          // Ignore unreadable file during vault search
+        }
       }
     }
 
@@ -1703,11 +1748,13 @@ export class VaultToolExecutor {
       const trimmed = pathsInput.trim();
       if (trimmed.startsWith("[")) {
         try {
-          const parsed = JSON.parse(trimmed);
+          const parsed: unknown = JSON.parse(trimmed);
           if (Array.isArray(parsed)) {
             rawList = parsed.map((item) => String(item || "").trim()).filter(Boolean);
           }
-        } catch {}
+        } catch {
+          // Fallback to comma/newline splitting if not valid JSON array
+        }
       }
       if (rawList.length === 0) {
         rawList = trimmed
@@ -2177,7 +2224,7 @@ export class VaultToolExecutor {
         }
         openTabs.push(`- ${details}`);
       } else {
-        const fileView: any = view;
+        const fileView = view as unknown as { file?: unknown };
         if (fileView?.file instanceof TFile) {
           openTabs.push(
             `- 📄 [[${fileView.file.path}]] (${view.getViewType()})`
@@ -2209,14 +2256,14 @@ export class VaultToolExecutor {
       let existingLeaf: WorkspaceLeaf | null = null;
       this.app.workspace.iterateAllLeaves((l: WorkspaceLeaf) => {
         if (!existingLeaf && !this.isSidepanelLeaf(l)) {
-          const v: any = l.view;
+          const v = l.view as unknown as { file?: TFile };
           if (v?.file?.path === file.path) {
             existingLeaf = l;
           }
         }
       });
       if (existingLeaf) {
-        this.app.workspace.revealLeaf(existingLeaf);
+        await this.app.workspace.revealLeaf(existingLeaf);
         return `Focused existing workspace tab for [[${file.path}]].`;
       }
     }
@@ -2240,7 +2287,7 @@ export class VaultToolExecutor {
     }
 
     await leaf.openFile(file);
-    this.app.workspace.revealLeaf(leaf);
+    await this.app.workspace.revealLeaf(leaf);
     return `Opened [[${file.path}]] directly in workspace (${openMode || "new_tab"}).`;
   }
 
@@ -2255,7 +2302,7 @@ export class VaultToolExecutor {
     const toClose: WorkspaceLeaf[] = [];
     this.app.workspace.iterateAllLeaves((leaf: WorkspaceLeaf) => {
       if (this.isSidepanelLeaf(leaf)) return;
-      const v: any = leaf.view;
+      const v = leaf.view as unknown as { file?: TFile };
       if (v?.file?.path === targetPath) {
         toClose.push(leaf);
       }
@@ -2499,17 +2546,19 @@ export class VaultToolExecutor {
 
   public async openGraphView(mode: string): Promise<string> {
     try {
+      const appWithCommands = this.app as unknown as {
+        commands?: { executeCommandById?: (id: string) => void };
+      };
       if (mode === "local") {
-        // @ts-ignore
-        this.app.commands.executeCommandById("graph:open-local");
+        appWithCommands.commands?.executeCommandById?.("graph:open-local");
         return "Opened Local Graph View in Obsidian for the active note.";
       } else {
-        // @ts-ignore
-        this.app.commands.executeCommandById("graph:open");
+        appWithCommands.commands?.executeCommandById?.("graph:open");
         return "Opened global Graph View in Obsidian.";
       }
-    } catch (e: any) {
-      return `Error opening graph view: ${e.message || String(e)}`;
+    } catch (e: unknown) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      return `Error opening graph view: ${errMsg}`;
     }
   }
 

@@ -41,6 +41,7 @@ const context = await esbuild.context({
 
 if (prod) {
   await context.rebuild();
+  await context.dispose();
   // Copy styles.css to root
   if (fs.existsSync("src/styles.css")) {
     fs.copyFileSync("src/styles.css", "styles.css");
