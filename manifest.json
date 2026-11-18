@@ -1,9 +1,10 @@
 {
-  "id": "obsidian-ai-sidepanel",
-  "name": "Assistant Panel",
+  "id": "assistant-hub",
+  "name": "Assistant Hub",
   "version": "1.0.0",
   "minAppVersion": "0.15.0",
   "description": "Universal AI sidepanel supporting any LLM provider (OpenAI, Anthropic, Gemini, OpenRouter, Groq, Ollama) with direct vault note interaction and autonomous agent tools.",
   "author": "dchokaa654",
+  "authorUrl": "https://github.com/dchokaa654",
   "isDesktopOnly": false
 }

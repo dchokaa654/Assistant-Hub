@@ -1,4 +1,4 @@
-# Obsidian AI Sidepanel Plugin
+# Assistant Hub for Obsidian
 
 An intelligent, full-featured AI Assistant sidebar plugin for [Obsidian](https://obsidian.md). It connects to **any AI provider** using **any API key** (or local offline models) and **directly interacts with all your Obsidian vault notes** through autonomous agent tools.
 
@@ -42,26 +42,27 @@ An intelligent, full-featured AI Assistant sidebar plugin for [Obsidian](https:/
 ## 🚀 Quick Installation
 
 ### Option 1: Development Build (Local Vault)
-1. Navigate to the plugin directory:
+1. Clone and build the plugin:
    ```bash
-   cd C:\Users\dchok\.gemini\antigravity\scratch\obsidian-ai-sidepanel
+   git clone https://github.com/dchokaa654/Assistant-Hub.git
+   cd Assistant-Hub
    npm install
    npm run build
    ```
 2. Copy the resulting build files (`manifest.json`, `main.js`, `styles.css`) into your Obsidian vault's plugin directory:
    ```
-   <YourVault>/.obsidian/plugins/obsidian-ai-sidepanel/
+   <YourVault>/.obsidian/plugins/assistant-hub/
    ├── manifest.json
    ├── main.js
    └── styles.css
    ```
-3. In Obsidian, go to **Settings** → **Community Plugins** → **Installed Plugins**, click the refresh icon, and toggle on **AI Vault Sidepanel**.
+3. In Obsidian, go to **Settings** → **Community Plugins** → **Installed Plugins**, click the refresh icon, and toggle on **Assistant Hub**.
 
 ---
 
 ## ⚙️ Configuration
 
-Open **Settings** → **AI Sidepanel**:
+Open **Settings** → **Assistant Hub**:
 
 1. **Provider Preset**: Choose your provider (OpenRouter, OpenAI, Anthropic, Gemini, Groq, DeepSeek, Ollama, or Custom).
 2. **API Key**: Enter your key (e.g. `sk-...`). Note: Ollama does not require an API key.
@@ -77,3 +78,9 @@ Open **Settings** → **AI Sidepanel**:
 - *"Read [[Project Alpha]] and [[Meeting 2026-11-10]] and draft an executive briefing note in 'Briefings/Alpha-Summary.md'."*
 - *"What are the recurring themes across my daily notes this week?"*
 - *"Based on my active note, generate 5 challenging review questions and append them to the end of the note."*
+
+---
+
+## 📄 License
+
+This project is open source and licensed under the [MIT License](LICENSE). Anyone is free to use, modify, and distribute it.
