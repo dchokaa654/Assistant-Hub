@@ -1,7 +1,7 @@
 {
   "id": "assistant-hub",
   "name": "Assistant Hub",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "minAppVersion": "1.7.2",
   "description": "Universal AI sidepanel supporting any LLM provider (OpenAI, Anthropic, Gemini, OpenRouter, Groq, Ollama) with direct vault note interaction and autonomous agent tools.",
   "author": "dchokaa654",

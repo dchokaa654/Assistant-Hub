@@ -1,6 +1,6 @@
 {
   "name": "obsidian-ai-sidepanel",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "An intelligent AI Sidepanel for Obsidian that connects to any LLM provider and directly interacts with your vault notes.",
   "main": "main.js",
   "scripts": {
