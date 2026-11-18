@@ -4,6 +4,6 @@
   "version": "1.0.0",
   "minAppVersion": "0.15.0",
   "description": "Universal AI sidepanel supporting any LLM provider (OpenAI, Anthropic, Gemini, OpenRouter, Groq, Ollama) with direct vault note interaction and autonomous agent tools.",
-  "author": "Antigravity",
+  "author": "dchokaa654",
   "isDesktopOnly": false
 }

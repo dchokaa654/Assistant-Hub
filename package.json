@@ -16,7 +16,7 @@
     "chat",
     "agent"
   ],
-  "author": "Antigravity",
+  "author": "dchokaa654",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.11.0",

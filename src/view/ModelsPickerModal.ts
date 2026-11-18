@@ -405,7 +405,20 @@ export class ModelsPickerModal extends Modal {
       cls: "ai-card-model-name",
     });
 
-    const tagsGroup = topRow.createDiv({ cls: "ai-card-tags-group" });
+    if (isSelected) {
+      const badge = topRow.createSpan({ cls: "ai-card-selected-tag" });
+      setIcon(badge, "check");
+      badge.createSpan({ text: " Active" });
+    }
+
+    const idTag = card.createDiv({ cls: "ai-card-id-pill" });
+    idTag.setText(m.id);
+
+    if (m.description) {
+      card.createDiv({ cls: "ai-card-desc", text: m.description });
+    }
+
+    const tagsGroup = card.createDiv({ cls: "ai-card-tags-group ai-card-meta-row" });
 
     const catPill = tagsGroup.createSpan({
       cls: `ai-card-category-pill cat-${cat}`,
@@ -436,19 +449,6 @@ export class ModelsPickerModal extends Modal {
         text: "VERIFIED",
         attr: { title: "Live-tested 200 OK with your API key" },
       });
-    }
-
-    if (isSelected) {
-      const badge = tagsGroup.createSpan({ cls: "ai-card-selected-tag" });
-      setIcon(badge, "check");
-      badge.createSpan({ text: " Active" });
-    }
-
-    const idTag = card.createDiv({ cls: "ai-card-id-pill" });
-    idTag.setText(m.id);
-
-    if (m.description) {
-      card.createDiv({ cls: "ai-card-desc", text: m.description });
     }
 
     card.addEventListener("click", async () => {

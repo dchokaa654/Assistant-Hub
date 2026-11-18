@@ -1560,7 +1560,17 @@ var ModelsPickerModal = class extends import_obsidian2.Modal {
       text: m.name || m.id,
       cls: "ai-card-model-name"
     });
-    const tagsGroup = topRow.createDiv({ cls: "ai-card-tags-group" });
+    if (isSelected) {
+      const badge = topRow.createSpan({ cls: "ai-card-selected-tag" });
+      (0, import_obsidian2.setIcon)(badge, "check");
+      badge.createSpan({ text: " Active" });
+    }
+    const idTag = card.createDiv({ cls: "ai-card-id-pill" });
+    idTag.setText(m.id);
+    if (m.description) {
+      card.createDiv({ cls: "ai-card-desc", text: m.description });
+    }
+    const tagsGroup = card.createDiv({ cls: "ai-card-tags-group ai-card-meta-row" });
     const catPill = tagsGroup.createSpan({
       cls: `ai-card-category-pill cat-${cat}`,
       attr: { title: catMeta.label }
@@ -1588,16 +1598,6 @@ var ModelsPickerModal = class extends import_obsidian2.Modal {
         text: "VERIFIED",
         attr: { title: "Live-tested 200 OK with your API key" }
       });
-    }
-    if (isSelected) {
-      const badge = tagsGroup.createSpan({ cls: "ai-card-selected-tag" });
-      (0, import_obsidian2.setIcon)(badge, "check");
-      badge.createSpan({ text: " Active" });
-    }
-    const idTag = card.createDiv({ cls: "ai-card-id-pill" });
-    idTag.setText(m.id);
-    if (m.description) {
-      card.createDiv({ cls: "ai-card-desc", text: m.description });
     }
     card.addEventListener("click", async () => {
       await this.selectModel(m.id);
@@ -7325,15 +7325,80 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
     const botIcon = headerTitle.createSpan({ cls: "ai-popup-bot-icon" });
     (0, import_obsidian7.setIcon)(botIcon, "bot");
     headerTitle.createSpan({ text: "Connected AI Models", cls: "ai-popup-title" });
-    const closeBtn = cardHeader.createEl("button", {
+    const headerActions = cardHeader.createDiv({ cls: "ai-popup-header-actions" });
+    const headerRescanBtn = headerActions.createEl("button", {
+      cls: "clickable-icon ai-popup-rescan-btn",
+      attr: { title: "Re-scan & Live Verify Models", type: "button" }
+    });
+    (0, import_obsidian7.setIcon)(headerRescanBtn, "refresh-cw");
+    headerRescanBtn.addEventListener("click", () => {
+      this.closeModelPopup();
+      new ModelsPickerModal(
+        this.app,
+        this.plugin,
+        () => this.updateModelPill(),
+        { forceScan: true }
+      ).open();
+    });
+    const closeBtn = headerActions.createEl("button", {
       cls: "clickable-icon ai-popup-close-btn",
-      attr: { title: "Close" }
+      attr: { title: "Close", type: "button" }
     });
     (0, import_obsidian7.setIcon)(closeBtn, "x");
     closeBtn.addEventListener("click", () => this.closeModelPopup());
     const profiles = this.plugin.getProfiles();
     const activeProfile = this.plugin.getActiveProfile();
     let showAllProfiles = false;
+    const getPopupState = () => {
+      const attached2 = getSyncedAttachedModels(this.plugin.settings);
+      const hasBaseUrl = Boolean(this.plugin.settings.baseUrl?.trim());
+      const hasKeyOrLocal = Boolean(this.plugin.settings.apiKey?.trim()) || isLocalBaseUrl(this.plugin.settings.baseUrl);
+      const isConnected = hasBaseUrl && hasKeyOrLocal;
+      const entries = showAllProfiles ? profiles.flatMap(
+        (p) => (p.attachedModels || []).filter((m) => m.isLive === true).map((m) => ({
+          profileId: p.id,
+          profileName: p.name || getProviderLabelFromBaseUrl(p.baseUrl),
+          baseUrl: p.baseUrl,
+          model: {
+            ...m,
+            isLive: true,
+            category: m.category || categorizeModel(m.id, m.name, m.description)
+          }
+        }))
+      ) : attached2.map((m) => ({
+        profileId: activeProfile?.id || "",
+        profileName: activeProfile?.name || getProviderLabelFromBaseUrl(this.plugin.settings.baseUrl),
+        baseUrl: this.plugin.settings.baseUrl,
+        model: m
+      }));
+      return { attached: attached2, hasBaseUrl, hasKeyOrLocal, isConnected, entries };
+    };
+    const initialState = getPopupState();
+    const statusSummaryBox = this.popupCardEl.createDiv({
+      cls: "ai-popup-connection-summary"
+    });
+    const statusBox = statusSummaryBox.createDiv({ cls: "ai-popup-status-box" });
+    const statusDotEl = statusBox.createSpan({ cls: "ai-popup-status-dot" });
+    const statusTextEl = statusBox.createSpan({ cls: "ai-popup-status-text" });
+    const urlInfoBox = statusSummaryBox.createDiv({ cls: "ai-popup-url-box" });
+    urlInfoBox.createSpan({ cls: "ai-popup-url-label", text: "Endpoint:" });
+    const urlValueEl = urlInfoBox.createSpan({ cls: "ai-popup-url-value" });
+    const updateConnectionSummary = () => {
+      const { attached: attached2, hasBaseUrl, hasKeyOrLocal, isConnected, entries } = getPopupState();
+      const statusDotClass = showAllProfiles ? entries.length > 0 ? "online" : "pending" : !isConnected ? "warning" : attached2.length > 0 ? "online" : "pending";
+      statusDotEl.className = `ai-popup-status-dot ${statusDotClass}`;
+      const endpointLabel = getProviderLabelFromBaseUrl(this.plugin.settings.baseUrl);
+      const statusMessage = showAllProfiles ? `All Profiles \u2022 ${entries.length} Verified Model${entries.length === 1 ? "" : "s"}` : !hasBaseUrl ? "Base URL not configured (Set in Settings)" : !hasKeyOrLocal ? "No API key (Set in Settings)" : attached2.length > 1 ? `${endpointLabel} \u2022 ${attached2.length} Models Verified` : attached2.length === 1 ? `${endpointLabel} \u2022 1 Model Verified` : `${endpointLabel}: Ready (Scan to verify models)`;
+      statusTextEl.setText(statusMessage);
+      if (showAllProfiles) {
+        urlInfoBox.style.display = "none";
+      } else {
+        urlInfoBox.style.display = "flex";
+        const urlStr = this.plugin.settings.baseUrl || "Not set";
+        urlValueEl.setText(urlStr);
+        urlValueEl.setAttr("title", urlStr);
+      }
+    };
     if (profiles.length > 1) {
       const profilesBar = this.popupCardEl.createDiv({
         cls: "ai-popup-profiles-bar"
@@ -7367,7 +7432,8 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
           } else {
             allBtn.removeClass("active");
             pBtn.addClass("active");
-            renderPopupModelCards();
+            activeCategory = "all";
+            refreshPopupCatalog();
           }
         });
       }
@@ -7378,77 +7444,44 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
         for (const item of profBtns) {
           item.el.removeClass("active");
         }
-        renderPopupModelCards();
+        activeCategory = "all";
+        refreshPopupCatalog();
       });
     }
-    const statusBox = this.popupCardEl.createDiv({ cls: "ai-popup-status-box" });
-    const hasBaseUrl = Boolean(this.plugin.settings.baseUrl?.trim());
-    const hasKeyOrLocal = Boolean(this.plugin.settings.apiKey?.trim()) || isLocalBaseUrl(this.plugin.settings.baseUrl);
-    const isConnected = hasBaseUrl && hasKeyOrLocal;
-    const attached = getSyncedAttachedModels(this.plugin.settings);
-    const statusDotClass = !isConnected ? "warning" : attached.length > 0 ? "online" : "pending";
-    statusBox.createSpan({
-      cls: `ai-popup-status-dot ${statusDotClass}`
-    });
-    const endpointLabel = getProviderLabelFromBaseUrl(this.plugin.settings.baseUrl);
-    const statusMessage = !hasBaseUrl ? "Base URL not configured (Set in Settings)" : !hasKeyOrLocal ? "No API key (Set in Settings)" : attached.length > 1 ? `${endpointLabel} \u2022 ${attached.length} Models Verified` : attached.length === 1 ? `${endpointLabel} \u2022 1 Model Verified` : `${endpointLabel}: Ready (Scan to verify models)`;
-    statusBox.createSpan({
-      cls: "ai-popup-status-text",
-      text: statusMessage
-    });
-    const urlInfoBox = this.popupCardEl.createDiv({ cls: "ai-popup-url-box" });
-    urlInfoBox.createSpan({ cls: "ai-popup-url-label", text: "Base URL: " });
-    urlInfoBox.createSpan({
-      cls: "ai-popup-url-value",
-      text: this.plugin.settings.baseUrl || "Not set"
-    });
     const modelsSection = this.popupCardEl.createDiv({ cls: "ai-popup-models-section" });
     const modelsHeader = modelsSection.createDiv({ cls: "ai-popup-models-header" });
-    modelsHeader.createSpan({
+    const modelsCountLabelEl = modelsHeader.createSpan({
       cls: "ai-popup-label",
-      text: attached.length > 0 ? `Verified Models (${attached.length})` : "Attached API Models"
-    });
-    const headerRescanBtn = modelsHeader.createEl("button", {
-      cls: "clickable-icon ai-popup-rescan-btn",
-      attr: { title: "Re-scan & Live Verify Models" }
-    });
-    (0, import_obsidian7.setIcon)(headerRescanBtn, "refresh-cw");
-    headerRescanBtn.addEventListener("click", () => {
-      this.closeModelPopup();
-      new ModelsPickerModal(
-        this.app,
-        this.plugin,
-        () => this.updateModelPill(),
-        { forceScan: true }
-      ).open();
+      text: "Attached API Models"
     });
     let activeFilterQuery = "";
     let activeCategory = "all";
-    let filterInputEl = null;
-    let catBarEl = null;
-    if (attached.length >= 4) {
-      filterInputEl = modelsSection.createEl("input", {
-        type: "text",
-        cls: "ai-popup-filter-input",
-        attr: { placeholder: `Quick filter ${attached.length} verified models...` }
-      });
-    }
-    const categoriesPresent = new Set(
-      attached.map((m) => m.category || categorizeModel(m.id, m.name, m.description))
-    );
-    const orderedCats = MODEL_CATEGORY_ORDER.filter((c) => categoriesPresent.has(c));
-    if (orderedCats.length >= 2) {
-      catBarEl = modelsSection.createDiv({ cls: "ai-popup-cat-bar" });
-    }
+    const filterInputEl = modelsSection.createEl("input", {
+      type: "text",
+      cls: "ai-popup-filter-input"
+    });
+    const catBarEl = modelsSection.createDiv({ cls: "ai-popup-cat-bar" });
     const modelsList = modelsSection.createDiv({ cls: "ai-popup-models-list" });
     const renderPopupCatChips = () => {
-      if (!catBarEl)
-        return;
+      const { entries } = getPopupState();
+      const categoriesPresent = new Set(
+        entries.map(
+          (entry) => entry.model.category || categorizeModel(entry.model.id, entry.model.name, entry.model.description)
+        )
+      );
+      const orderedCats = MODEL_CATEGORY_ORDER.filter((c) => categoriesPresent.has(c));
       catBarEl.empty();
+      if (orderedCats.length < 2) {
+        catBarEl.addClass("hidden");
+        activeCategory = "all";
+        return;
+      }
+      catBarEl.removeClass("hidden");
       const addChip = (cat, label) => {
         const chip = catBarEl.createEl("button", {
           cls: `ai-popup-cat-chip ${activeCategory === cat ? "active" : ""}`,
-          text: label
+          text: label,
+          attr: { type: "button" }
         });
         chip.addEventListener("click", (e) => {
           e.stopPropagation();
@@ -7464,23 +7497,7 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
     };
     const renderPopupModelCards = () => {
       modelsList.empty();
-      const entries = showAllProfiles ? profiles.flatMap(
-        (p) => (p.attachedModels || []).filter((m) => m.isLive === true).map((m) => ({
-          profileId: p.id,
-          profileName: p.name || getProviderLabelFromBaseUrl(p.baseUrl),
-          baseUrl: p.baseUrl,
-          model: {
-            ...m,
-            isLive: true,
-            category: m.category || categorizeModel(m.id, m.name, m.description)
-          }
-        }))
-      ) : attached.map((m) => ({
-        profileId: activeProfile?.id || "",
-        profileName: activeProfile?.name || getProviderLabelFromBaseUrl(this.plugin.settings.baseUrl),
-        baseUrl: this.plugin.settings.baseUrl,
-        model: m
-      }));
+      const { hasBaseUrl, hasKeyOrLocal, entries } = getPopupState();
       if (entries.length === 0) {
         const emptyBox = modelsList.createDiv({ cls: "ai-popup-empty-box" });
         const emptyIcon = emptyBox.createSpan({ cls: "ai-popup-empty-icon" });
@@ -7491,7 +7508,8 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
         });
         const scanBtn = emptyBox.createEl("button", {
           cls: "mod-cta ai-popup-scan-action-btn",
-          text: "\u26A1 Scan & Identify Models"
+          text: "\u26A1 Scan & Identify Models",
+          attr: { type: "button" }
         });
         scanBtn.addEventListener("click", () => {
           this.closeModelPopup();
@@ -7531,7 +7549,20 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
         });
         const topRow = modelCard.createDiv({ cls: "ai-model-card-top" });
         topRow.createSpan({ text: m.name || m.id, cls: "ai-model-name" });
-        const tagsGroup = topRow.createDiv({ cls: "ai-card-tags-group" });
+        if (isSelected) {
+          const checkIcon = topRow.createSpan({
+            cls: "ai-model-check",
+            attr: { title: "Active model" }
+          });
+          (0, import_obsidian7.setIcon)(checkIcon, "check");
+        }
+        if (m.id !== m.name) {
+          modelCard.createDiv({ cls: "ai-model-card-id-sub", text: m.id });
+        }
+        if (m.description) {
+          modelCard.createDiv({ text: m.description, cls: "ai-model-desc" });
+        }
+        const tagsGroup = modelCard.createDiv({ cls: "ai-card-tags-group ai-popup-card-tags" });
         if (showAllProfiles && entry.profileName) {
           tagsGroup.createSpan({
             cls: "ai-popup-profile-tag",
@@ -7551,16 +7582,6 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
           text: catMeta.shortLabel
         });
         tagsGroup.createSpan({ cls: "ai-model-live-tag", text: "LIVE" });
-        if (isSelected) {
-          const checkIcon = tagsGroup.createSpan({ cls: "ai-model-check" });
-          (0, import_obsidian7.setIcon)(checkIcon, "check");
-        }
-        if (m.id !== m.name) {
-          modelCard.createDiv({ cls: "ai-model-card-id-sub", text: m.id });
-        }
-        if (m.description) {
-          modelCard.createSpan({ text: m.description, cls: "ai-model-desc" });
-        }
         modelCard.addEventListener("click", async () => {
           if (entry.profileId && entry.profileId !== this.plugin.settings.activeProfileId) {
             await this.plugin.activateProfile(entry.profileId, m.id);
@@ -7576,15 +7597,34 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
         });
       }
     };
-    if (filterInputEl) {
-      filterInputEl.addEventListener("input", () => {
-        activeFilterQuery = filterInputEl.value;
-        renderPopupModelCards();
-      });
-    }
-    renderPopupCatChips();
-    renderPopupModelCards();
-    const customRow = this.popupCardEl.createDiv({ cls: "ai-popup-custom-row" });
+    const refreshPopupCatalog = () => {
+      const { entries } = getPopupState();
+      updateConnectionSummary();
+      modelsCountLabelEl.setText(
+        entries.length > 0 ? showAllProfiles ? `All Profile Models (${entries.length})` : `Verified Models (${entries.length})` : "Attached API Models"
+      );
+      if (entries.length >= 4) {
+        filterInputEl.removeClass("hidden");
+        filterInputEl.setAttr(
+          "placeholder",
+          `Quick filter ${entries.length} verified models...`
+        );
+      } else {
+        filterInputEl.addClass("hidden");
+        activeFilterQuery = "";
+        filterInputEl.value = "";
+      }
+      renderPopupCatChips();
+      renderPopupModelCards();
+    };
+    filterInputEl.addEventListener("input", () => {
+      activeFilterQuery = filterInputEl.value;
+      renderPopupModelCards();
+    });
+    refreshPopupCatalog();
+    const attached = initialState.attached;
+    const popupFooter = this.popupCardEl.createDiv({ cls: "ai-popup-footer" });
+    const customRow = popupFooter.createDiv({ cls: "ai-popup-custom-row" });
     const customInput = customRow.createEl("input", {
       type: "text",
       cls: "ai-popup-custom-input",
@@ -7593,7 +7633,8 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
     });
     const setBtn = customRow.createEl("button", {
       cls: "ai-popup-set-btn",
-      text: "Test & Use"
+      text: "Test & Use",
+      attr: { type: "button" }
     });
     const handlePopupCustomTest = async () => {
       const val = customInput.value.trim();
@@ -7623,8 +7664,9 @@ I have direct access to your Obsidian notes, folders, workspace tabs, and knowle
         await handlePopupCustomTest();
       }
     });
-    const browseAllBtn = this.popupCardEl.createEl("button", {
+    const browseAllBtn = popupFooter.createEl("button", {
       cls: "ai-popup-browse-all-btn",
+      attr: { type: "button" },
       text: attached.length > 1 ? `\u26A1 Explore All ${attached.length} Models by Family` : "\u26A1 Verify & Browse Callable Models"
     });
     browseAllBtn.addEventListener("click", () => {
