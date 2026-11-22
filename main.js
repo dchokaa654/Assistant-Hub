@@ -1858,8 +1858,9 @@ var AISidepanelSettingTab = class extends import_obsidian3.PluginSettingTab {
     }
   }
   refreshTab() {
-    if (typeof this.update === "function") {
-      this.update();
+    const updateFn = this.update;
+    if (typeof updateFn === "function") {
+      updateFn.call(this);
     } else {
       this.renderLegacy(this.containerEl);
     }

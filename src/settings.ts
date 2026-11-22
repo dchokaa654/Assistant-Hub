@@ -209,8 +209,9 @@ export class AISidepanelSettingTab extends PluginSettingTab {
   }
 
   private refreshTab(): void {
-    if (typeof this.update === "function") {
-      this.update();
+    const updateFn = (this as unknown as { update?: () => void }).update;
+    if (typeof updateFn === "function") {
+      updateFn.call(this);
     } else {
       this.renderLegacy(this.containerEl);
     }
