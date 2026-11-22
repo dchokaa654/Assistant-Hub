@@ -71,9 +71,9 @@ export default class AISidepanelPlugin extends Plugin {
 
         const view = await this.activateView();
         if (view) {
-          const inputEl = view.containerEl.querySelector(
+          const inputEl = view.containerEl.querySelector<HTMLTextAreaElement>(
             ".ai-sidepanel-textarea"
-          ) as HTMLTextAreaElement | null;
+          );
           if (inputEl) {
             inputEl.value = `Regarding this excerpt:\n"""\n${selection}\n"""\n\n`;
             inputEl.focus();
@@ -94,12 +94,12 @@ export default class AISidepanelPlugin extends Plugin {
 
         const view = await this.activateView();
         if (view) {
-          const inputEl = view.containerEl.querySelector(
+          const inputEl = view.containerEl.querySelector<HTMLTextAreaElement>(
             ".ai-sidepanel-textarea"
-          ) as HTMLTextAreaElement | null;
-          const sendBtn = view.containerEl.querySelector(
+          );
+          const sendBtn = view.containerEl.querySelector<HTMLButtonElement>(
             ".ai-send-btn"
-          ) as HTMLButtonElement | null;
+          );
 
           if (inputEl && sendBtn) {
             inputEl.value = `Please provide a concise and structured summary of this note with key takeaways and any action items.`;

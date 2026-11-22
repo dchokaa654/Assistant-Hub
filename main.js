@@ -1857,12 +1857,19 @@ var AISidepanelSettingTab = class extends import_obsidian3.PluginSettingTab {
       this.keyDebounceTimer = null;
     }
   }
+  refreshTab() {
+    if (typeof this.update === "function") {
+      this.update();
+    } else {
+      this.renderLegacy(this.containerEl);
+    }
+  }
   openScannerModal(forceScan) {
     new ModelsPickerModal(
       this.app,
       this.plugin,
       () => {
-        this.display();
+        this.refreshTab();
       },
       {
         forceScan,
@@ -1934,7 +1941,7 @@ var AISidepanelSettingTab = class extends import_obsidian3.PluginSettingTab {
             if (this.modelTextInputEl) {
               this.modelTextInputEl.value = m.id;
             }
-            this.display();
+            this.refreshTab();
             new import_obsidian3.Notice(`Active Model set to: ${m.id}`);
           })();
         });
@@ -1956,14 +1963,10 @@ var AISidepanelSettingTab = class extends import_obsidian3.PluginSettingTab {
       });
     }
   }
-  display() {
-    const { containerEl } = this;
-    containerEl.empty();
-    new import_obsidian3.Setting(containerEl).setName("Assistant Hub Settings").setHeading();
-    new import_obsidian3.Setting(containerEl).setName("API Connections").setHeading();
+  configureConnectionProfileSetting(setting) {
     const profiles = this.plugin.getProfiles();
     const activeProfile = this.plugin.getActiveProfile();
-    new import_obsidian3.Setting(containerEl).setName("Connection Profile").setDesc(
+    setting.setName("Connection Profile").setDesc(
       "Switch your active API key & endpoint, or add multiple connections to use models across different providers."
     ).addDropdown((dropdown) => {
       for (const prof of profiles) {
@@ -1976,7 +1979,7 @@ var AISidepanelSettingTab = class extends import_obsidian3.PluginSettingTab {
       }
       dropdown.setValue(activeProfile?.id || "").onChange(async (val) => {
         await this.plugin.activateProfile(val);
-        this.display();
+        this.refreshTab();
       });
     }).addButton((btn) => {
       btn.setButtonText("+ Add Connection").setCta().setTooltip("Add another API Key & Base URL connection").onClick(() => {
@@ -1985,7 +1988,7 @@ var AISidepanelSettingTab = class extends import_obsidian3.PluginSettingTab {
           this.plugin,
           null,
           (_id, verify) => {
-            this.display();
+            this.refreshTab();
             if (verify) {
               this.openScannerModal(true);
             }
@@ -1993,6 +1996,10 @@ var AISidepanelSettingTab = class extends import_obsidian3.PluginSettingTab {
         ).open();
       });
     });
+  }
+  renderConnectionsList(containerEl) {
+    const profiles = this.plugin.getProfiles();
+    const activeProfile = this.plugin.getActiveProfile();
     const listEl = containerEl.createDiv({ cls: "ai-connections-list" });
     for (const prof of profiles) {
       const isActive = prof.id === activeProfile?.id;
@@ -2036,7 +2043,7 @@ var AISidepanelSettingTab = class extends import_obsidian3.PluginSettingTab {
         useBtn.addEventListener("click", () => {
           void (async () => {
             await this.plugin.activateProfile(prof.id);
-            this.display();
+            this.refreshTab();
           })();
         });
       }
@@ -2065,7 +2072,7 @@ var AISidepanelSettingTab = class extends import_obsidian3.PluginSettingTab {
           this.plugin,
           prof,
           (_id, verify) => {
-            this.display();
+            this.refreshTab();
             if (verify) {
               this.openScannerModal(true);
             }
@@ -2083,12 +2090,179 @@ var AISidepanelSettingTab = class extends import_obsidian3.PluginSettingTab {
             const removed = await this.plugin.deleteProfile(prof.id);
             if (removed) {
               new import_obsidian3.Notice(`Deleted connection "${prof.name}".`);
-              this.display();
+              this.refreshTab();
             }
           })();
         });
       }
     }
+  }
+  configureSystemPromptSetting(setting) {
+    setting.setName("System Prompt").setDesc("Instructions guiding the AI's personality, formatting, and vault reasoning behavior.").addTextArea((textArea) => {
+      textArea.inputEl.rows = 8;
+      textArea.inputEl.cols = 60;
+      textArea.setValue(this.plugin.settings.systemPrompt).onChange(async (val) => {
+        this.plugin.settings.systemPrompt = val;
+        await this.plugin.saveSettings();
+      });
+    }).addExtraButton((btn) => {
+      btn.setIcon("reset").setTooltip("Reset to default prompt").onClick(async () => {
+        this.plugin.settings.systemPrompt = DEFAULT_SETTINGS.systemPrompt;
+        await this.plugin.saveSettings();
+        this.refreshTab();
+      });
+    });
+  }
+  getControlValue(key) {
+    switch (key) {
+      case "temperature":
+        return this.plugin.settings.temperature;
+      case "enableVaultTools":
+        return this.plugin.settings.enableVaultTools;
+      case "autoIncludeActiveNote":
+        return this.plugin.settings.autoIncludeActiveNote;
+      case "autoContinueTasks":
+        return this.plugin.settings.autoContinueTasks !== false;
+      case "maxToolIterations":
+        return Math.min(50, Math.max(1, this.plugin.settings.maxToolIterations || 25));
+      default:
+        return void 0;
+    }
+  }
+  async setControlValue(key, value) {
+    switch (key) {
+      case "temperature":
+        this.plugin.settings.temperature = Number(value);
+        break;
+      case "enableVaultTools":
+        this.plugin.settings.enableVaultTools = Boolean(value);
+        break;
+      case "autoIncludeActiveNote":
+        this.plugin.settings.autoIncludeActiveNote = Boolean(value);
+        break;
+      case "autoContinueTasks":
+        this.plugin.settings.autoContinueTasks = Boolean(value);
+        break;
+      case "maxToolIterations":
+        this.plugin.settings.maxToolIterations = Number(value);
+        break;
+    }
+    await this.plugin.saveSettings();
+  }
+  getSettingDefinitions() {
+    return [
+      {
+        type: "group",
+        heading: "API Connections",
+        items: [
+          {
+            name: "Connection Profile",
+            desc: "Switch your active API key & endpoint, or add multiple connections to use models across different providers.",
+            render: (setting) => {
+              this.configureConnectionProfileSetting(setting);
+            }
+          },
+          {
+            name: "Saved Connections",
+            searchable: false,
+            render: (setting) => {
+              setting.settingEl.empty();
+              this.renderConnectionsList(setting.settingEl);
+            }
+          },
+          {
+            name: "Verified Models",
+            searchable: false,
+            render: (setting) => {
+              setting.settingEl.empty();
+              this.modelsSummaryEl = setting.settingEl.createDiv({
+                cls: "ai-settings-models-summary"
+              });
+              this.renderModelsSummary();
+              return () => {
+                this.modelsSummaryEl = null;
+              };
+            }
+          },
+          {
+            name: "Temperature",
+            desc: "Higher values make output more creative, lower values make it more focused and deterministic.",
+            control: {
+              type: "slider",
+              key: "temperature",
+              min: 0,
+              max: 1.5,
+              step: 0.1,
+              defaultValue: DEFAULT_SETTINGS.temperature
+            }
+          }
+        ]
+      },
+      {
+        type: "group",
+        heading: "Vault Interaction & Agent Tools",
+        items: [
+          {
+            name: "Enable Vault Agent Tools",
+            desc: "Allows the AI to search, read, create, edit, move, and delete notes & folders, and interact directly with workspace tabs and the active editor via tool calling.",
+            control: {
+              type: "toggle",
+              key: "enableVaultTools",
+              defaultValue: DEFAULT_SETTINGS.enableVaultTools
+            }
+          },
+          {
+            name: "Auto-Attach Active Note",
+            desc: "Automatically injects the title and content of your currently focused note into the chat context.",
+            control: {
+              type: "toggle",
+              key: "autoIncludeActiveNote",
+              defaultValue: DEFAULT_SETTINGS.autoIncludeActiveNote
+            }
+          },
+          {
+            name: "Auto-Continue Long Tasks",
+            desc: "Automatically runs multi-step tasks across compact progress checkpoints (with tool-history compression) until complete, without needing to manually click Continue.",
+            control: {
+              type: "toggle",
+              key: "autoContinueTasks",
+              defaultValue: true
+            }
+          },
+          {
+            name: "Tool Steps per Checkpoint",
+            desc: "Steps allowed per checkpoint batch before compacting context and handing off (default 25, up to 50).",
+            control: {
+              type: "slider",
+              key: "maxToolIterations",
+              min: 1,
+              max: 50,
+              step: 1,
+              defaultValue: 25
+            }
+          }
+        ]
+      },
+      {
+        type: "group",
+        heading: "System Instructions",
+        items: [
+          {
+            name: "System Prompt",
+            desc: "Instructions guiding the AI's personality, formatting, and vault reasoning behavior.",
+            render: (setting) => {
+              this.configureSystemPromptSetting(setting);
+            }
+          }
+        ]
+      }
+    ];
+  }
+  renderLegacy(containerEl) {
+    containerEl.empty();
+    new import_obsidian3.Setting(containerEl).setName("API Connections").setHeading();
+    this.configureConnectionProfileSetting(new import_obsidian3.Setting(containerEl));
+    this.renderConnectionsList(containerEl);
     this.modelsSummaryEl = containerEl.createDiv({ cls: "ai-settings-models-summary" });
     this.renderModelsSummary();
     new import_obsidian3.Setting(containerEl).setName("Temperature").setDesc("Higher values make output more creative, lower values make it more focused and deterministic.").addSlider(
@@ -2123,20 +2297,10 @@ var AISidepanelSettingTab = class extends import_obsidian3.PluginSettingTab {
       })
     );
     new import_obsidian3.Setting(containerEl).setName("System Instructions").setHeading();
-    new import_obsidian3.Setting(containerEl).setName("System Prompt").setDesc("Instructions guiding the AI's personality, formatting, and vault reasoning behavior.").addTextArea((textArea) => {
-      textArea.inputEl.rows = 8;
-      textArea.inputEl.cols = 60;
-      textArea.setValue(this.plugin.settings.systemPrompt).onChange(async (val) => {
-        this.plugin.settings.systemPrompt = val;
-        await this.plugin.saveSettings();
-      });
-    }).addExtraButton((btn) => {
-      btn.setIcon("reset").setTooltip("Reset to default prompt").onClick(async () => {
-        this.plugin.settings.systemPrompt = DEFAULT_SETTINGS.systemPrompt;
-        await this.plugin.saveSettings();
-        this.display();
-      });
-    });
+    this.configureSystemPromptSetting(new import_obsidian3.Setting(containerEl));
+  }
+  display() {
+    this.renderLegacy(this.containerEl);
   }
 };
 
